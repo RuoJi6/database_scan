@@ -59,6 +59,17 @@ func TestWriteXLSX(t *testing.T) {
 			if !strings.Contains(body, `<cols>`) || !strings.Contains(body, `customWidth="1"`) {
 				t.Fatalf("summary sheet missing custom column widths: %s", body)
 			}
+			dimensionPos := strings.Index(body, "<dimension ")
+			sheetViewsPos := strings.Index(body, "<sheetViews>")
+			formatPos := strings.Index(body, "<sheetFormatPr ")
+			colsPos := strings.Index(body, "<cols>")
+			sheetDataPos := strings.Index(body, "<sheetData>")
+			if dimensionPos < 0 || sheetViewsPos < 0 || formatPos < 0 || colsPos < 0 || sheetDataPos < 0 {
+				t.Fatalf("sheet missing expected worksheet metadata: %s", body)
+			}
+			if !(dimensionPos < sheetViewsPos && sheetViewsPos < formatPos && formatPos < colsPos && colsPos < sheetDataPos) {
+				t.Fatalf("worksheet metadata is not in the expected order: %s", body)
+			}
 			seenStyle = strings.Contains(body, `s="1"`) && strings.Contains(body, `s="3"`)
 		}
 		if f.Name == "xl/worksheets/sheet2.xml" {

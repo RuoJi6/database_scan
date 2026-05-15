@@ -255,6 +255,9 @@ func worksheetXML(rows [][]xlsxCell) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
 	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	b.WriteString(fmt.Sprintf(`<dimension ref="A1:%s"/>`, lastCellRef(rows)))
+	b.WriteString(`<sheetViews><sheetView workbookViewId="0"/></sheetViews>`)
+	b.WriteString(`<sheetFormatPr defaultRowHeight="15"/>`)
 	b.WriteString(colsXML(columnWidths(rows)))
 	b.WriteString(`<sheetData>`)
 	for r, row := range rows {
@@ -271,6 +274,20 @@ func worksheetXML(rows [][]xlsxCell) string {
 	}
 	b.WriteString(`</sheetData></worksheet>`)
 	return b.String()
+}
+
+func lastCellRef(rows [][]xlsxCell) string {
+	maxCols := 1
+	maxRows := len(rows)
+	if maxRows == 0 {
+		maxRows = 1
+	}
+	for _, row := range rows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	return cellRef(maxCols, maxRows)
 }
 
 func columnWidths(rows [][]xlsxCell) []float64 {
@@ -292,7 +309,7 @@ func columnWidths(rows [][]xlsxCell) []float64 {
 	}
 	widths := make([]float64, maxColumn+1)
 	for col := range widths {
-		width := float64(maxByColumn[col]) + 2
+		width := float64(maxByColumn[col])*1.25 + 3
 		if width < 8 {
 			width = 8
 		}
