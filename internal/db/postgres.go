@@ -58,7 +58,7 @@ func (a PostgresAdapter) Open(ctx context.Context, cfg Config, dialer ContextDia
 	pcfg.Port = uint16(cfg.Port)
 	pcfg.User = cfg.User
 	pcfg.Password = cfg.Password
-	pcfg.Database = cfg.Database
+	pcfg.Database = postgresDatabase(cfg.Database)
 	pcfg.ConnectTimeout = cfg.Timeout
 	pcfg.TLSConfig = nil
 	pcfg.Fallbacks = nil
@@ -71,6 +71,13 @@ func (a PostgresAdapter) Open(ctx context.Context, cfg Config, dialer ContextDia
 		return nil, err
 	}
 	return db, nil
+}
+
+func postgresDatabase(database string) string {
+	if strings.TrimSpace(database) == "" {
+		return "postgres"
+	}
+	return database
 }
 
 func (a PostgresAdapter) ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error) {

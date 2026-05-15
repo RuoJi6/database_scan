@@ -106,9 +106,23 @@ type TableFindings struct {
 
 type Reconnector func(ctx context.Context, database string) (*sql.DB, error)
 
+type tableJob struct {
+	Index   int
+	Total   int
+	Columns []db.Column
+}
+
+type tableOutcome struct {
+	Index     int
+	Table     TableResult
+	Summaries []Summary
+	Errors    []string
+	Hit       bool
+}
+
 func Scan(ctx context.Context, base *sql.DB, adapter db.Adapter, databases []string, opts Options, reconnect Reconnector) Result {
 	if opts.Workers <= 0 {
-		opts.Workers = 4
+		opts.Workers = 1
 	}
 	var result Result
 	var mu sync.Mutex
@@ -249,62 +263,151 @@ func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns 
 		}
 	}
 	sort.Strings(keys)
-	for i, key := range keys {
-		if err := ctx.Err(); err != nil {
-			addScanError(result, mu, fmt.Sprintf("scan interrupted: %v", err))
-			return
-		}
-		allCols := tableCols[key]
-		conditionCols := sensitiveColumnsByLevel(allCols, opts.Level)
-		tableName := allCols[0].Schema + "." + allCols[0].Table
-		progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s（字段 %d，敏感候选 %d）\n", allCols[0].Database, i+1, len(keys), tableName, len(allCols), len(conditionCols))
-		tableResult := TableResult{Database: allCols[0].Database, Schema: allCols[0].Schema, Name: allCols[0].Table, Columns: columnNames(allCols)}
-		totalRows, err := queryTableCount(ctx, sqlDB, adapter, allCols[0], opts)
-		if err != nil {
-			addError(result, mu, allCols[0], FieldContent, err)
-		} else {
-			tableResult.Total = totalRows
-		}
-		for j, col := range conditionCols {
-			if err := ctx.Err(); err != nil {
-				addScanError(result, mu, fmt.Sprintf("scan interrupted: %v", err))
+	if opts.Workers <= 1 || len(keys) <= 1 {
+		for i, key := range keys {
+			outcome := scanTable(ctx, sqlDB, adapter, tableJob{Index: i, Total: len(keys), Columns: tableCols[key]}, opts)
+			applyTableOutcome(result, mu, outcome, opts.OnTable)
+			if ctx.Err() != nil {
+				addScanError(result, mu, fmt.Sprintf("scan interrupted: %v", ctx.Err()))
 				return
 			}
-			kinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
-			progressf(opts.Progress, "  字段 %d/%d %s.%s: 统计中...\n", j+1, len(conditionCols), tableName, col.Name)
-			total, err := queryNonEmptyCount(ctx, sqlDB, adapter, col, opts)
-			if err != nil {
-				addError(result, mu, col, FieldContent, err)
-				continue
+		}
+		return
+	}
+
+	progressf(opts.Progress, "启用按表并发扫描：workers=%d\n", opts.Workers)
+	jobs := make(chan tableJob)
+	outcomes := make(chan tableOutcome)
+	var wg sync.WaitGroup
+	for i := 0; i < opts.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				outcome := scanTable(ctx, sqlDB, adapter, job, opts)
+				select {
+				case outcomes <- outcome:
+				case <-ctx.Done():
+					return
+				}
 			}
-			progressf(opts.Progress, "  字段 %d/%d %s.%s: 存在行数 %d\n", j+1, len(conditionCols), tableName, col.Name, total)
-			if total <= 0 {
-				continue
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for i, key := range keys {
+			if ctx.Err() != nil {
+				return
 			}
-			tableResult.Fields = append(tableResult.Fields, FieldResult{Name: col.Name, Kinds: kinds, Level: highestLevel(kinds), Mode: FieldContent, Total: total})
-			for _, kind := range kinds {
-				addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldContent, Total: total})
+			select {
+			case jobs <- tableJob{Index: i, Total: len(keys), Columns: tableCols[key]}:
+			case <-ctx.Done():
+				return
 			}
 		}
-		if len(tableResult.Fields) == 0 {
-			progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s 完成，无有效命中。\n", allCols[0].Database, i+1, len(keys), tableName)
+	}()
+	go func() {
+		wg.Wait()
+		close(outcomes)
+	}()
+
+	outcomeByIndex := map[int]tableOutcome{}
+	for outcome := range outcomes {
+		outcomeByIndex[outcome.Index] = outcome
+		applyTableOutcome(result, mu, outcome, opts.OnTable)
+	}
+	sortResultTables(result, mu)
+	if ctx.Err() != nil {
+		addScanError(result, mu, fmt.Sprintf("scan interrupted: %v", ctx.Err()))
+		return
+	}
+	for i := range keys {
+		if _, ok := outcomeByIndex[i]; !ok {
+			addScanError(result, mu, "scan interrupted before all tables completed")
+			return
+		}
+	}
+}
+
+func scanTable(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, job tableJob, opts Options) tableOutcome {
+	outcome := tableOutcome{Index: job.Index}
+	allCols := job.Columns
+	if len(allCols) == 0 {
+		return outcome
+	}
+	conditionCols := sensitiveColumnsByLevel(allCols, opts.Level)
+	tableName := allCols[0].Schema + "." + allCols[0].Table
+	progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s（字段 %d，敏感候选 %d）\n", allCols[0].Database, job.Index+1, job.Total, tableName, len(allCols), len(conditionCols))
+	tableResult := TableResult{Database: allCols[0].Database, Schema: allCols[0].Schema, Name: allCols[0].Table, Columns: columnNames(allCols)}
+	totalRows, err := queryTableCount(ctx, sqlDB, adapter, allCols[0], opts)
+	if err != nil {
+		outcome.Errors = append(outcome.Errors, formatColumnError(allCols[0], FieldContent, err))
+	} else {
+		tableResult.Total = totalRows
+	}
+	for j, col := range conditionCols {
+		if err := ctx.Err(); err != nil {
+			outcome.Errors = append(outcome.Errors, fmt.Sprintf("scan interrupted: %v", err))
+			return outcome
+		}
+		kinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
+		progressf(opts.Progress, "  字段 %d/%d %s.%s: 统计中...\n", j+1, len(conditionCols), tableName, col.Name)
+		total, err := queryNonEmptyCount(ctx, sqlDB, adapter, col, opts)
+		if err != nil {
+			outcome.Errors = append(outcome.Errors, formatColumnError(col, FieldContent, err))
 			continue
 		}
-		progressf(opts.Progress, "  样例 %s: 抽取最多 %d 行整行数据...\n", tableName, opts.Limit)
-		rows, err := querySampleRows(ctx, sqlDB, adapter, allCols, conditionCols, opts)
-		if err != nil {
-			addError(result, mu, allCols[0], FieldContent, err)
-		} else {
-			tableResult.Rows = rows
+		progressf(opts.Progress, "  字段 %d/%d %s.%s: 存在行数 %d\n", j+1, len(conditionCols), tableName, col.Name, total)
+		if total <= 0 {
+			continue
 		}
-		mu.Lock()
-		result.Tables = append(result.Tables, tableResult)
-		mu.Unlock()
-		if opts.OnTable != nil {
-			opts.OnTable(tableResult)
+		tableResult.Fields = append(tableResult.Fields, FieldResult{Name: col.Name, Kinds: kinds, Level: highestLevel(kinds), Mode: FieldContent, Total: total})
+		for _, kind := range kinds {
+			outcome.Summaries = append(outcome.Summaries, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldContent, Total: total})
 		}
-		progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s 完成，命中字段 %d，样例行 %d。\n", allCols[0].Database, i+1, len(keys), tableName, len(tableResult.Fields), len(tableResult.Rows))
 	}
+	if len(tableResult.Fields) == 0 {
+		progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s 完成，无有效命中。\n", allCols[0].Database, job.Index+1, job.Total, tableName)
+		return outcome
+	}
+	progressf(opts.Progress, "  样例 %s: 抽取最多 %d 行整行数据...\n", tableName, opts.Limit)
+	rows, err := querySampleRows(ctx, sqlDB, adapter, allCols, conditionCols, opts)
+	if err != nil {
+		outcome.Errors = append(outcome.Errors, formatColumnError(allCols[0], FieldContent, err))
+	} else {
+		tableResult.Rows = rows
+	}
+	outcome.Table = tableResult
+	outcome.Hit = true
+	progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s 完成，命中字段 %d，样例行 %d。\n", allCols[0].Database, job.Index+1, job.Total, tableName, len(tableResult.Fields), len(tableResult.Rows))
+	return outcome
+}
+
+func applyTableOutcome(result *Result, mu *sync.Mutex, outcome tableOutcome, onTable func(TableResult)) {
+	mu.Lock()
+	result.Errors = append(result.Errors, outcome.Errors...)
+	for _, summary := range outcome.Summaries {
+		if summary.Total > 0 {
+			result.Summaries = append(result.Summaries, summary)
+		}
+	}
+	if outcome.Hit {
+		result.Tables = append(result.Tables, outcome.Table)
+	}
+	mu.Unlock()
+	if outcome.Hit && onTable != nil {
+		onTable(outcome.Table)
+	}
+}
+
+func sortResultTables(result *Result, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
+	sort.SliceStable(result.Tables, func(i, j int) bool {
+		a := result.Tables[i]
+		b := result.Tables[j]
+		return a.Database+"\x00"+a.Schema+"\x00"+a.Name < b.Database+"\x00"+b.Schema+"\x00"+b.Name
+	})
 }
 
 func columnNames(columns []db.Column) []string {
@@ -498,10 +601,14 @@ func addSample(result *Result, mu *sync.Mutex, sample Sample, mask bool) {
 	result.Samples = append(result.Samples, sample)
 }
 
+func formatColumnError(col db.Column, mode Mode, err error) string {
+	return fmt.Sprintf("%s.%s.%s mode=%s: %v", col.Database, col.Table, col.Name, mode, err)
+}
+
 func addError(result *Result, mu *sync.Mutex, col db.Column, mode Mode, err error) {
 	mu.Lock()
 	defer mu.Unlock()
-	result.Errors = append(result.Errors, fmt.Sprintf("%s.%s.%s mode=%s: %v", col.Database, col.Table, col.Name, mode, err))
+	result.Errors = append(result.Errors, formatColumnError(col, mode, err))
 }
 
 func addScanError(result *Result, mu *sync.Mutex, message string) {

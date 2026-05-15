@@ -37,7 +37,7 @@ type Config struct {
 }
 
 func parseArgs(args []string) (Config, error) {
-	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 4, Timeout: 15 * time.Second}
+	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 1, Timeout: 15 * time.Second}
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
 	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres")
@@ -57,7 +57,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
-	fs.IntVar(&cfg.Workers, "workers", 4, "scan workers")
+	fs.IntVar(&cfg.Workers, "workers", 1, "scan workers; 1 disables parallel table scanning")
 	fs.DurationVar(&cfg.Timeout, "timeout", 15*time.Second, "single query timeout")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

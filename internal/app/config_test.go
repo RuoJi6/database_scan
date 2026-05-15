@@ -121,6 +121,37 @@ func TestParseArgsNoColor(t *testing.T) {
 	}
 }
 
+func TestParseArgsDefaultsWorkersToSingleThread(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mssql",
+		"--host", "192.0.2.10",
+		"--user", "sa",
+		"--password", "secret",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Workers != 1 {
+		t.Fatalf("expected default workers=1, got %d", cfg.Workers)
+	}
+}
+
+func TestParseArgsAcceptsWorkers(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mssql",
+		"--host", "192.0.2.10",
+		"--user", "sa",
+		"--password", "secret",
+		"--workers", "6",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Workers != 6 {
+		t.Fatalf("expected workers=6, got %d", cfg.Workers)
+	}
+}
+
 func TestParseArgsAcceptsLevel(t *testing.T) {
 	cfg, err := parseArgs([]string{
 		"--type", "mssql",

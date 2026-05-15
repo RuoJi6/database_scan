@@ -100,7 +100,7 @@ Oracle 的 `--database` 表示 service name：
 - `--mask`：样例值脱敏显示
 - `--no-color`：关闭敏感字段和值的颜色标记，适合复制到报告或重定向到文件
 - `--output result.xlsx`：将扫描结果写入 Excel 文件；每个命中表一个 Sheet，上方是敏感字段清单，下方是整行样例数据，敏感字段和值会按风险颜色标记
-- `--workers`：扫描并发，默认 4
+- `--workers`：按表并发扫描数量，默认 `1`，即不启用并发；例如 `--workers 4`
 - `--timeout`：单查询超时，默认 15s
 - `--sql`：执行自定义 SQL；按需求原样执行，不限制为只读
 

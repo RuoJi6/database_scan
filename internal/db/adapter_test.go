@@ -97,6 +97,15 @@ func TestNewAdapterAliases(t *testing.T) {
 	}
 }
 
+func TestPostgresDatabaseDefaultsToMaintenanceDatabase(t *testing.T) {
+	if got := postgresDatabase(""); got != "postgres" {
+		t.Fatalf("expected postgres maintenance database, got %q", got)
+	}
+	if got := postgresDatabase("app_prod"); got != "app_prod" {
+		t.Fatalf("expected explicit database to be preserved, got %q", got)
+	}
+}
+
 func TestMSSQLTLSHandshakeErrorDetection(t *testing.T) {
 	err := errors.New("TLS Handshake failed: cannot read handshake packet: EOF")
 	if !isMSSQLTLSHandshakeError(err) {

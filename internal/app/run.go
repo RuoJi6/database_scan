@@ -42,6 +42,7 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer conn.Close()
+	configureConnectionPool(conn, cfg.Workers)
 
 	infoCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	info, err := adapter.ServerInfo(infoCtx, conn, dbCfg)
@@ -75,7 +76,12 @@ func Run(ctx context.Context, args []string) error {
 		reconnect = func(ctx context.Context, database string) (*sql.DB, error) {
 			nextCfg := dbCfg
 			nextCfg.Database = database
-			return adapter.Open(ctx, nextCfg, dialer)
+			nextDB, err := adapter.Open(ctx, nextCfg, dialer)
+			if err != nil {
+				return nil, err
+			}
+			configureConnectionPool(nextDB, cfg.Workers)
+			return nextDB, nil
 		}
 	}
 	scanCtx, cancelScan := context.WithCancel(ctx)
@@ -135,6 +141,14 @@ func Run(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", cfg.Output)
 	}
 	return nil
+}
+
+func configureConnectionPool(conn *sql.DB, workers int) {
+	if workers < 1 {
+		workers = 1
+	}
+	conn.SetMaxOpenConns(workers)
+	conn.SetMaxIdleConns(workers)
 }
 
 func scanDatabases(adapter db.Adapter, available []string, wanted string) []string {
