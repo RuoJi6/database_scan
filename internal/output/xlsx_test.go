@@ -1,0 +1,79 @@
+package output
+
+import (
+	"archive/zip"
+	"io"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"database_scan/internal/detector"
+	"database_scan/internal/scanner"
+)
+
+func TestWriteXLSX(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scan.xlsx")
+	result := scanner.Result{Tables: []scanner.TableResult{{
+		Database: "app",
+		Schema:   "dbo",
+		Name:     "Users",
+		Total:    2,
+		Columns:  []string{"ID", "UserName", "Password"},
+		Fields: []scanner.FieldResult{
+			{Name: "UserName", Kinds: []detector.Kind{detector.Username}, Mode: scanner.FieldContent, Total: 2},
+			{Name: "Password", Kinds: []detector.Kind{detector.Password}, Mode: scanner.FieldContent, Total: 1},
+		},
+		Rows: []scanner.RowSample{{Values: map[string]string{"ID": "1", "UserName": "admin", "Password": "secret"}}},
+	}}}
+	if err := WriteXLSX(path, result); err != nil {
+		t.Fatalf("WriteXLSX returned error: %v", err)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open xlsx zip: %v", err)
+	}
+	defer zr.Close()
+	seenWorkbook := false
+	seenSheet := false
+	seenDetailSheet := false
+	seenStyle := false
+	for _, f := range zr.File {
+		if f.Name == "xl/workbook.xml" {
+			seenWorkbook = true
+		}
+		if f.Name == "xl/worksheets/sheet1.xml" {
+			seenSheet = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open sheet: %v", err)
+			}
+			data, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatalf("read sheet: %v", err)
+			}
+			body := string(data)
+			if !strings.Contains(body, "敏感信息汇总") || !strings.Contains(body, "[数据库]") || !strings.Contains(body, "dbo.Users") || !strings.Contains(body, "（存在行数：2）") {
+				t.Fatalf("summary sheet missing expected content: %s", body)
+			}
+			seenStyle = strings.Contains(body, `s="1"`) && strings.Contains(body, `s="3"`)
+		}
+		if f.Name == "xl/worksheets/sheet2.xml" {
+			seenDetailSheet = true
+		}
+	}
+	if !seenWorkbook || !seenSheet || !seenDetailSheet {
+		t.Fatalf("xlsx missing workbook or sheets: workbook=%v summary=%v detail=%v", seenWorkbook, seenSheet, seenDetailSheet)
+	}
+	if !seenStyle {
+		t.Fatal("expected sensitive cells to include style ids")
+	}
+}
+
+func TestSheetNamesForTest(t *testing.T) {
+	result := scanner.Result{Tables: []scanner.TableResult{{Schema: "dbo", Name: "Users"}, {Schema: "dbo", Name: "Users"}}}
+	names := SheetNamesForTest(result)
+	if len(names) != 3 || names[0] != "dbo.Users" || names[1] != "dbo.Users 2" || names[2] != "敏感信息汇总" {
+		t.Fatalf("unexpected sheet names: %#v", names)
+	}
+}

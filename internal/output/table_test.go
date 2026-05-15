@@ -17,3 +17,11 @@ func TestTableSanitizesLongMultilineValues(t *testing.T) {
 		t.Fatalf("expected long value truncation: %q", out)
 	}
 }
+
+func TestOneLineCollapsesWhitespace(t *testing.T) {
+	got := OneLine("Microsoft SQL Server\n\tApr 29 2016\r\nEnterprise")
+	want := "Microsoft SQL Server Apr 29 2016 Enterprise"
+	if got != want {
+		t.Fatalf("OneLine() = %q, want %q", got, want)
+	}
+}

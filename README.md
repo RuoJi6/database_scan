@@ -9,7 +9,7 @@
 - 数据库：MySQL/MariaDB/TiDB、MSSQL、PostgreSQL
 - 代理：直连、SOCKS5、HTTP CONNECT
 - 认证：命令行密码或隐藏交互输入
-- 输出：连接信息、命中汇总、最多 15 条完整样例数据
+- 输出：连接信息、按表分组的敏感字段、存在行数和类似 SQL 查询结果的整行真实样例值
 - 检索模式：
   - `field-content`：根据表/字段名定位敏感字段，再检索字段内容
   - `field-name`：只检索敏感表名/字段名
@@ -28,6 +28,12 @@ go build -o database_scan ./cmd/database_scan
 ./database_scan --type mysql --host 127.0.0.1 --port 3306 --user root --password pass
 ```
 
+也可以把地址和端口写在一起，`--host 192.0.2.10:1433` 或直接把目标作为位置参数：
+
+```bash
+./database_scan --type mssql 192.0.2.10:1433 --user sa --password pass
+```
+
 如果不希望数据库密码出现在 shell 历史记录中，可以省略 `--password`，程序会提示隐藏输入：
 
 ```bash
@@ -35,11 +41,19 @@ go build -o database_scan ./cmd/database_scan
 ```
 
 ```bash
-./database_scan --type mssql --host 10.0.0.5 --user sa --password pass --proxy socks5://proxy_user:proxy_pass@127.0.0.1:1080 --mode all
+./database_scan --type mssql --host 192.0.2.10 --user sa --password pass --proxy socks5://proxy_user:proxy_pass@127.0.0.1:1080 --mode all
 ```
 
 ```bash
-./database_scan --type postgres --host 10.0.0.8 --user dev --password pass --mode content --limit 15
+./database_scan --type postgres --host 198.51.100.10 --user dev --password pass --mode content --limit 15
+```
+
+```bash
+./database_scan --type mssql --host 192.0.2.10 --user sa --password pass --database appdb
+```
+
+```bash
+./database_scan --type mssql --host 192.0.2.10 --user sa --password pass --database appdb --table dbo.Users
 ```
 
 ```bash
@@ -49,14 +63,17 @@ go build -o database_scan ./cmd/database_scan
 ## 参数
 
 - `--type mysql|mssql|postgres`：数据库类型
-- `--host` / `--port`：目标地址和端口，端口不填时使用默认端口
+- `--host` / `--port`：目标地址和端口，端口不填时使用默认端口；也支持 `--host host:port` 或位置参数 `host:port`
 - `--user` / `--password`：账号密码；密码不填时交互输入
-- `--database`：初始数据库；MySQL/MSSQL 下会优先扫描该库，PostgreSQL 会按库重连扫描
+- `--database`：指定要扫描的单个数据库；不指定时列举并扫描全部可访问数据库
+- `--table`：只扫描指定数据库中的某一张表，需要同时指定 `--database`；支持 `Users` 或 `dbo.Users`
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
-- `--limit`：最多展示样例数，默认 15
+- `--limit`：每张命中表最多展示整行样例数量，默认 15
 - `--include-system`：包含系统库
 - `--mask`：样例值脱敏显示
+- `--no-color`：关闭敏感字段和值的颜色标记，适合复制到报告或重定向到文件
+- `--output result.xlsx`：将扫描结果写入 Excel 文件；每个命中表一个 Sheet，上方是敏感字段清单，下方是整行样例数据，敏感字段和值会按风险颜色标记
 - `--workers`：扫描并发，默认 4
 - `--timeout`：单查询超时，默认 15s
 - `--sql`：执行自定义 SQL；按需求原样执行，不限制为只读
@@ -73,3 +90,4 @@ go build -o database_scan ./cmd/database_scan
 ## 注意
 
 默认会完整展示敏感样例值，用于截图证明数据存在；如需降低暴露风险，请加 `--mask`。
+扫描过程中按 `Ctrl+C` 会停止后续扫描，并尽量输出和写入已经扫描完成的表结果。

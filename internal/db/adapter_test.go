@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+	"net"
 	"strings"
 	"testing"
 )
@@ -28,5 +30,41 @@ func TestAdapterSQLGeneration(t *testing.T) {
 		if !strings.Contains(strings.ToLower(sql), "users") || !strings.Contains(strings.ToLower(sql), "phone") {
 			t.Fatalf("generated SQL does not reference table/column: %s", sql)
 		}
+	}
+}
+
+func TestSampleRowsSQLGeneration(t *testing.T) {
+	selectCols := []Column{
+		{Database: "app", Schema: "dbo", Table: "users", Name: "id"},
+		{Database: "app", Schema: "dbo", Table: "users", Name: "username"},
+		{Database: "app", Schema: "dbo", Table: "users", Name: "password"},
+	}
+	conditionCols := selectCols[1:]
+	cases := []string{
+		(MySQLAdapter{}).SampleRowsSQL(selectCols, conditionCols, 3),
+		(PostgresAdapter{}).SampleRowsSQL(selectCols, conditionCols, 3),
+		(MSSQLAdapter{}).SampleRowsSQL(selectCols, conditionCols, 3),
+	}
+	for _, sql := range cases {
+		lower := strings.ToLower(sql)
+		if !strings.Contains(lower, "id") || !strings.Contains(lower, "username") || !strings.Contains(lower, "password") || !strings.Contains(lower, "users") {
+			t.Fatalf("generated row sample SQL missing expected fields: %s", sql)
+		}
+	}
+}
+
+func TestMSSQLTLSHandshakeErrorDetection(t *testing.T) {
+	err := errors.New("TLS Handshake failed: cannot read handshake packet: EOF")
+	if !isMSSQLTLSHandshakeError(err) {
+		t.Fatal("expected TLS handshake error to be detected")
+	}
+	if isMSSQLTLSHandshakeError(errors.New("login failed for user")) {
+		t.Fatal("unexpected TLS handshake detection")
+	}
+}
+
+func TestJoinHostPortSupportsIPv6(t *testing.T) {
+	if got := net.JoinHostPort("::1", "1433"); got != "[::1]:1433" {
+		t.Fatalf("unexpected IPv6 address: %s", got)
 	}
 }

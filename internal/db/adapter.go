@@ -51,7 +51,9 @@ type Adapter interface {
 	ListColumns(ctx context.Context, db *sql.DB, database string, includeSystem bool) ([]Column, error)
 	QuoteIdent(parts ...string) string
 	CountNonEmptySQL(col Column) string
+	CountTableSQL(col Column) string
 	SampleNonEmptySQL(col Column, limit int) string
+	SampleRowsSQL(selectCols []Column, conditionCols []Column, limit int) string
 	ContentRegexSQL(col Column, pattern string) (string, []any)
 }
 

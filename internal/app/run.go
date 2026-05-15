@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 
 	"database_scan/internal/db"
 	"database_scan/internal/output"
@@ -60,10 +64,7 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list databases: %w", err)
 	}
-	if cfg.Database != "" && adapter.Name() != "postgres" {
-		databases = preferDatabase(databases, cfg.Database)
-	}
-	sort.Strings(databases)
+	databases = scanDatabases(databases, cfg.Database)
 	if len(databases) == 0 {
 		output.Section(os.Stdout, "扫描结果")
 		fmt.Fprintln(os.Stdout, "未发现可扫描数据库。")
@@ -77,21 +78,72 @@ func Run(ctx context.Context, args []string) error {
 			return adapter.Open(ctx, nextCfg, dialer)
 		}
 	}
-	result := scanner.Scan(ctx, conn, adapter, databases, scanner.Options{
+	scanCtx, cancelScan := context.WithCancel(ctx)
+	defer cancelScan()
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	scanDone := make(chan struct{})
+	var interrupted atomic.Bool
+	go func() {
+		select {
+		case <-ctx.Done():
+			cancelScan()
+			return
+		case sig := <-signals:
+			interrupted.Store(true)
+			fmt.Fprintf(os.Stderr, "\n收到中断信号 %s，正在停止当前查询并输出已扫描结果...\n", sig)
+			cancelScan()
+			go func() {
+				_ = conn.Close()
+			}()
+		case <-scanDone:
+			return
+		}
+
+		select {
+		case sig := <-signals:
+			fmt.Fprintf(os.Stderr, "\n再次收到中断信号 %s，强制退出。\n", sig)
+			os.Exit(130)
+		case <-scanDone:
+			return
+		}
+	}()
+	var partialMu sync.Mutex
+	partial := scanner.Result{}
+	result := scanner.Scan(scanCtx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
-		Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem,
+		Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: os.Stderr,
+		OnTable: func(table scanner.TableResult) {
+			partialMu.Lock()
+			partial.Tables = append(partial.Tables, table)
+			partialMu.Unlock()
+		},
 	}, reconnect)
-	printScanResult(result)
+	close(scanDone)
+	if scanCtx.Err() != nil || interrupted.Load() {
+		partialMu.Lock()
+		partial.Errors = append(partial.Errors, result.Errors...)
+		result = partial
+		partialMu.Unlock()
+	}
+	printScanResult(result, !cfg.NoColor)
+	if cfg.Output != "" {
+		if err := output.WriteXLSX(cfg.Output, result); err != nil {
+			return fmt.Errorf("write xlsx output: %w", err)
+		}
+		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", cfg.Output)
+	}
 	return nil
 }
 
-func preferDatabase(databases []string, wanted string) []string {
-	for _, name := range databases {
-		if name == wanted {
-			return []string{wanted}
-		}
+func scanDatabases(available []string, wanted string) []string {
+	if strings.TrimSpace(wanted) != "" {
+		return []string{wanted}
 	}
-	return databases
+	out := append([]string(nil), available...)
+	sort.Strings(out)
+	return out
 }
 
 func printServerInfo(info db.ServerInfo) {
@@ -101,7 +153,7 @@ func printServerInfo(info db.ServerInfo) {
 		{"解析IP", blank(info.ResolvedAddr)},
 		{"代理", blank(info.Proxy)},
 		{"数据库类型", info.DBType},
-		{"版本", info.Version},
+		{"版本", output.OneLine(info.Version)},
 		{"当前用户", info.CurrentUser},
 		{"当前库", blank(info.CurrentDB)},
 		{"服务端时间", info.ServerTime},
@@ -118,18 +170,27 @@ func printServerInfo(info db.ServerInfo) {
 	output.Table(os.Stdout, []string{"字段", "值"}, rows)
 }
 
-func printScanResult(result scanner.Result) {
-	output.Section(os.Stdout, "命中汇总")
-	if len(result.Summaries) == 0 {
+func printScanResult(result scanner.Result, color bool) {
+	output.Section(os.Stdout, "敏感字段与样例值")
+	if len(result.Tables) == 0 {
 		fmt.Fprintln(os.Stdout, "未发现敏感信息命中。")
 	} else {
-		output.Table(os.Stdout, []string{"库", "Schema", "表", "字段", "敏感类型", "模式", "总数"}, scanner.SummaryRows(result.Summaries))
-	}
-	output.Section(os.Stdout, "样例数据")
-	if len(result.Samples) == 0 {
-		fmt.Fprintln(os.Stdout, "无样例数据。")
-	} else {
-		output.Table(os.Stdout, []string{"库", "Schema", "表", "字段", "敏感类型", "模式", "完整值"}, scanner.SampleRows(result.Samples))
+		for i, table := range result.Tables {
+			if i > 0 {
+				fmt.Fprintln(os.Stdout)
+			}
+			fmt.Fprintf(os.Stdout, "[数据库] %s\n", table.Database)
+			fmt.Fprintf(os.Stdout, "[表] %s.%s【实际数据行数：%d】\n", table.Schema, table.Name, table.Total)
+			for _, row := range scanner.SensitiveFieldRows(table.Fields, color) {
+				fmt.Fprintf(os.Stdout, "%s （存在行数：%s）\n", row[0], row[1])
+			}
+			headers, rows := scanner.RowSampleRows(table, color)
+			if len(rows) == 0 {
+				fmt.Fprintln(os.Stdout, "数据库真实样例值: 无")
+			} else {
+				output.Table(os.Stdout, headers, rows)
+			}
+		}
 	}
 	if len(result.Errors) > 0 {
 		output.Section(os.Stdout, "扫描错误")

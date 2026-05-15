@@ -16,14 +16,21 @@ type PostgresAdapter struct{}
 func (a PostgresAdapter) Name() string { return "postgres" }
 
 func (a PostgresAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer) (*sql.DB, error) {
-	connString := fmt.Sprintf("host=%s port=%d user=%s password=%s sslmode=disable connect_timeout=%d", cfg.Host, cfg.Port, cfg.User, cfg.Password, int(cfg.Timeout.Seconds()))
-	if cfg.Database != "" {
-		connString += " dbname=" + cfg.Database
-	}
-	pcfg, err := pgx.ParseConfig(connString)
+	pcfg, err := pgx.ParseConfig("")
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Port <= 0 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("invalid postgres port %d", cfg.Port)
+	}
+	pcfg.Host = cfg.Host
+	pcfg.Port = uint16(cfg.Port)
+	pcfg.User = cfg.User
+	pcfg.Password = cfg.Password
+	pcfg.Database = cfg.Database
+	pcfg.ConnectTimeout = cfg.Timeout
+	pcfg.TLSConfig = nil
+	pcfg.Fallbacks = nil
 	pcfg.Config.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return dialer.DialContext(ctx, network, addr)
 	}
@@ -94,9 +101,27 @@ func (a PostgresAdapter) CountNonEmptySQL(c Column) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s IS NOT NULL AND %s::text <> ''", a.QuoteIdent(c.Schema, c.Table), qcol, qcol)
 }
 
+func (a PostgresAdapter) CountTableSQL(c Column) string {
+	return fmt.Sprintf("SELECT COUNT(*) FROM %s", a.QuoteIdent(c.Schema, c.Table))
+}
+
 func (a PostgresAdapter) SampleNonEmptySQL(c Column, limit int) string {
 	qcol := a.QuoteIdent(c.Name)
 	return fmt.Sprintf("SELECT %s::text FROM %s WHERE %s IS NOT NULL AND %s::text <> '' LIMIT %d", qcol, a.QuoteIdent(c.Schema, c.Table), qcol, qcol, limit)
+}
+
+func (a PostgresAdapter) SampleRowsSQL(selectCols []Column, conditionCols []Column, limit int) string {
+	selects := make([]string, 0, len(selectCols))
+	conditions := make([]string, 0, len(conditionCols))
+	for _, col := range selectCols {
+		qcol := a.QuoteIdent(col.Name)
+		selects = append(selects, fmt.Sprintf("%s::text AS %s", qcol, qcol))
+	}
+	for _, col := range conditionCols {
+		qcol := a.QuoteIdent(col.Name)
+		conditions = append(conditions, fmt.Sprintf("(%s IS NOT NULL AND %s::text <> '')", qcol, qcol))
+	}
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT %d", strings.Join(selects, ", "), a.QuoteIdent(selectCols[0].Schema, selectCols[0].Table), strings.Join(conditions, " OR "), limit)
 }
 
 func (a PostgresAdapter) ContentRegexSQL(c Column, pattern string) (string, []any) {

@@ -3,15 +3,23 @@ package output
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
+
+var whitespaceRE = regexp.MustCompile(`\s+`)
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func Section(w io.Writer, title string) {
 	fmt.Fprintf(w, "\n==== %s ====\n", title)
 }
 
 func Table(w io.Writer, headers []string, rows [][]string) {
+	TableIndent(w, "", headers, rows)
+}
+
+func TableIndent(w io.Writer, indent string, headers []string, rows [][]string) {
 	widths := make([]int, len(headers))
 	for i, h := range headers {
 		widths[i] = displayWidth(h)
@@ -23,20 +31,20 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 			}
 		}
 	}
-	writeRow(w, headers, widths)
+	writeRow(w, indent, headers, widths)
 	sep := make([]string, len(headers))
 	for i, width := range widths {
 		sep[i] = strings.Repeat("-", width)
 	}
-	writeRow(w, sep, widths)
+	writeRow(w, indent, sep, widths)
 	for _, row := range rows {
 		padded := make([]string, len(headers))
 		copy(padded, row)
-		writeRow(w, padded, widths)
+		writeRow(w, indent, padded, widths)
 	}
 }
 
-func writeRow(w io.Writer, row []string, widths []int) {
+func writeRow(w io.Writer, indent string, row []string, widths []int) {
 	parts := make([]string, len(widths))
 	for i := range widths {
 		cell := ""
@@ -45,7 +53,7 @@ func writeRow(w io.Writer, row []string, widths []int) {
 		}
 		parts[i] = cell + strings.Repeat(" ", widths[i]-displayWidth(cell))
 	}
-	fmt.Fprintln(w, strings.Join(parts, "  "))
+	fmt.Fprintln(w, indent+strings.Join(parts, "  "))
 }
 
 func sanitize(s string) string {
@@ -58,9 +66,13 @@ func sanitize(s string) string {
 	return s
 }
 
+func OneLine(s string) string {
+	return strings.TrimSpace(whitespaceRE.ReplaceAllString(s, " "))
+}
+
 func displayWidth(s string) int {
 	width := 0
-	for _, r := range sanitize(s) {
+	for _, r := range ansiRE.ReplaceAllString(sanitize(s), "") {
 		if r > 127 {
 			width += 2
 		} else {

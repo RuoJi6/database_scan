@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -27,7 +28,7 @@ func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer
 	}
 	mcfg := mysql.NewConfig()
 	mcfg.Net = netName
-	mcfg.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	mcfg.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	mcfg.User = cfg.User
 	mcfg.Passwd = cfg.Password
 	mcfg.DBName = cfg.Database
@@ -106,8 +107,26 @@ func (a MySQLAdapter) CountNonEmptySQL(c Column) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE `%s` IS NOT NULL AND CAST(`%s` AS CHAR) <> ''", a.QuoteIdent(c.Database, c.Table), escapeMySQLIdent(c.Name), escapeMySQLIdent(c.Name))
 }
 
+func (a MySQLAdapter) CountTableSQL(c Column) string {
+	return fmt.Sprintf("SELECT COUNT(*) FROM %s", a.QuoteIdent(c.Database, c.Table))
+}
+
 func (a MySQLAdapter) SampleNonEmptySQL(c Column, limit int) string {
 	return fmt.Sprintf("SELECT CAST(`%s` AS CHAR) FROM %s WHERE `%s` IS NOT NULL AND CAST(`%s` AS CHAR) <> '' LIMIT %d", escapeMySQLIdent(c.Name), a.QuoteIdent(c.Database, c.Table), escapeMySQLIdent(c.Name), escapeMySQLIdent(c.Name), limit)
+}
+
+func (a MySQLAdapter) SampleRowsSQL(selectCols []Column, conditionCols []Column, limit int) string {
+	selects := make([]string, 0, len(selectCols))
+	conditions := make([]string, 0, len(conditionCols))
+	for _, col := range selectCols {
+		qcol := a.QuoteIdent(col.Name)
+		selects = append(selects, fmt.Sprintf("CAST(%s AS CHAR) AS %s", qcol, qcol))
+	}
+	for _, col := range conditionCols {
+		qcol := a.QuoteIdent(col.Name)
+		conditions = append(conditions, fmt.Sprintf("(%s IS NOT NULL AND CAST(%s AS CHAR) <> '')", qcol, qcol))
+	}
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT %d", strings.Join(selects, ", "), a.QuoteIdent(selectCols[0].Database, selectCols[0].Table), strings.Join(conditions, " OR "), limit)
 }
 
 func (a MySQLAdapter) ContentRegexSQL(c Column, pattern string) (string, []any) {
