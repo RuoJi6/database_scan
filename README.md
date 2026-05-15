@@ -1,5 +1,7 @@
 # database_scan
 
+[![build](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml/badge.svg)](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml)
+
 `database_scan` 是一个 Go 编写的数据库敏感信息检索 CLI 工具，用于检查开发数据库中是否存在手机号、身份证、地址、账号、密码、邮箱、银行卡、token/secret 等敏感信息。默认终端表格输出，便于截图提交给开发部门。
 
 ## 支持能力
