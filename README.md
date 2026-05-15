@@ -28,8 +28,14 @@ go build -o database_scan ./cmd/database_scan
 ./database_scan --type mysql --host 127.0.0.1 --port 3306 --user root --password pass
 ```
 
+如果不希望数据库密码出现在 shell 历史记录中，可以省略 `--password`，程序会提示隐藏输入：
+
 ```bash
-./database_scan --type mssql --host 10.0.0.5 --user sa --password pass --proxy socks5://127.0.0.1:1080 --mode all
+./database_scan --type mysql --host 127.0.0.1 --port 3306 --user root
+```
+
+```bash
+./database_scan --type mssql --host 10.0.0.5 --user sa --password pass --proxy socks5://proxy_user:proxy_pass@127.0.0.1:1080 --mode all
 ```
 
 ```bash
@@ -54,6 +60,15 @@ go build -o database_scan ./cmd/database_scan
 - `--workers`：扫描并发，默认 4
 - `--timeout`：单查询超时，默认 15s
 - `--sql`：执行自定义 SQL；按需求原样执行，不限制为只读
+
+## 密码说明
+
+- 数据库密码可以通过 `--password` 传入，也可以省略该参数后在提示中隐藏输入。
+- 如果密码包含空格、`&`、`?`、`!` 等 shell 特殊字符，建议用单引号包裹，例如 `--password 'pa ss!word'`。
+- SOCKS5 代理支持用户名密码：`--proxy socks5://user:pass@host:port`。
+- HTTP CONNECT 代理支持用户名密码：`--proxy http://user:pass@host:port`。
+- 代理账号或密码里如果包含 `@`、`:`、`/`、`?`、`#` 等 URL 特殊字符，需要 URL 编码，例如 `@` 写成 `%40`，`:` 写成 `%3A`。
+- 为避免密码进入 shell 历史记录，生产或共享终端环境中建议省略数据库 `--password`，改用隐藏交互输入。
 
 ## 注意
 
