@@ -64,14 +64,14 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list databases: %w", err)
 	}
-	databases = scanDatabases(databases, cfg.Database)
+	databases = scanDatabases(adapter, databases, cfg.Database)
 	if len(databases) == 0 {
 		output.Section(os.Stdout, "扫描结果")
 		fmt.Fprintln(os.Stdout, "未发现可扫描数据库。")
 		return nil
 	}
 	var reconnect scanner.Reconnector
-	if adapter.Name() == "postgres" {
+	if adapter.NeedsDatabaseReconnect() {
 		reconnect = func(ctx context.Context, database string) (*sql.DB, error) {
 			nextCfg := dbCfg
 			nextCfg.Database = database
@@ -137,7 +137,12 @@ func Run(ctx context.Context, args []string) error {
 	return nil
 }
 
-func scanDatabases(available []string, wanted string) []string {
+func scanDatabases(adapter db.Adapter, available []string, wanted string) []string {
+	if adapter.Family() == "oracle" {
+		out := append([]string(nil), available...)
+		sort.Strings(out)
+		return out
+	}
 	if strings.TrimSpace(wanted) != "" {
 		return []string{wanted}
 	}

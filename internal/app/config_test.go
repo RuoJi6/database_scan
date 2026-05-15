@@ -1,6 +1,12 @@
 package app
 
-import "testing"
+import (
+	"context"
+	"database/sql"
+	"testing"
+
+	"database_scan/internal/db"
+)
 
 func TestParseArgsAcceptsHostPortInHostFlag(t *testing.T) {
 	cfg, err := parseArgs([]string{
@@ -44,6 +50,29 @@ func TestParseArgsDefaultsPortWhenTargetHasNoPort(t *testing.T) {
 	}
 	if cfg.Host != "203.0.113.10" || cfg.Port != 5432 {
 		t.Fatalf("unexpected target: %s:%d", cfg.Host, cfg.Port)
+	}
+}
+
+func TestParseArgsDefaultsPortForAliases(t *testing.T) {
+	cases := map[string]int{
+		"oceanbase": 3306,
+		"opengauss": 5432,
+		"kingbase":  5432,
+		"oracle":    1521,
+	}
+	for kind, wantPort := range cases {
+		cfg, err := parseArgs([]string{
+			"--type", kind,
+			"--host", "203.0.113.10",
+			"--user", "dev",
+			"--password", "secret",
+		})
+		if err != nil {
+			t.Fatalf("%s: parseArgs returned error: %v", kind, err)
+		}
+		if cfg.Port != wantPort {
+			t.Fatalf("%s: expected port %d, got %d", kind, wantPort, cfg.Port)
+		}
 	}
 }
 
@@ -122,14 +151,14 @@ func TestParseArgsRejectsTableWithoutDatabase(t *testing.T) {
 }
 
 func TestScanDatabasesUsesSpecifiedDatabaseOnly(t *testing.T) {
-	got := scanDatabases([]string{"app", "audit"}, "target")
+	got := scanDatabases(dbStub{family: "mysql"}, []string{"app", "audit"}, "target")
 	if len(got) != 1 || got[0] != "target" {
 		t.Fatalf("unexpected databases: %#v", got)
 	}
 }
 
 func TestScanDatabasesSortsAllWhenDatabaseIsNotSpecified(t *testing.T) {
-	got := scanDatabases([]string{"z", "a"}, "")
+	got := scanDatabases(dbStub{family: "mysql"}, []string{"z", "a"}, "")
 	want := []string{"a", "z"}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected length: %#v", got)
@@ -140,3 +169,40 @@ func TestScanDatabasesSortsAllWhenDatabaseIsNotSpecified(t *testing.T) {
 		}
 	}
 }
+
+func TestScanDatabasesKeepsAllOracleSchemasWhenDatabaseIsServiceName(t *testing.T) {
+	got := scanDatabases(dbStub{family: "oracle"}, []string{"Z", "A"}, "ORCL")
+	want := []string{"A", "Z"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected length: %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected oracle schemas: %#v", got)
+		}
+	}
+}
+
+type dbStub struct {
+	family string
+}
+
+func (s dbStub) Name() string                                                       { return s.family }
+func (s dbStub) Family() string                                                     { return s.family }
+func (s dbStub) DisplayName() string                                                { return s.family }
+func (s dbStub) DefaultPort() int                                                   { return 0 }
+func (s dbStub) NeedsDatabaseReconnect() bool                                       { return false }
+func (s dbStub) Open(context.Context, db.Config, db.ContextDialer) (*sql.DB, error) { return nil, nil }
+func (s dbStub) ServerInfo(context.Context, *sql.DB, db.Config) (db.ServerInfo, error) {
+	return db.ServerInfo{}, nil
+}
+func (s dbStub) ListDatabases(context.Context, *sql.DB, bool) ([]string, error) { return nil, nil }
+func (s dbStub) ListColumns(context.Context, *sql.DB, string, bool) ([]db.Column, error) {
+	return nil, nil
+}
+func (s dbStub) QuoteIdent(...string) string                        { return "" }
+func (s dbStub) CountNonEmptySQL(db.Column) string                  { return "" }
+func (s dbStub) CountTableSQL(db.Column) string                     { return "" }
+func (s dbStub) SampleNonEmptySQL(db.Column, int) string            { return "" }
+func (s dbStub) SampleRowsSQL([]db.Column, []db.Column, int) string { return "" }
+func (s dbStub) ContentRegexSQL(db.Column, string) (string, []any)  { return "", nil }

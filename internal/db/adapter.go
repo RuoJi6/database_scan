@@ -45,6 +45,10 @@ type Column struct {
 
 type Adapter interface {
 	Name() string
+	Family() string
+	DisplayName() string
+	DefaultPort() int
+	NeedsDatabaseReconnect() bool
 	Open(ctx context.Context, cfg Config, dialer ContextDialer) (*sql.DB, error)
 	ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error)
 	ListDatabases(ctx context.Context, db *sql.DB, includeSystem bool) ([]string, error)

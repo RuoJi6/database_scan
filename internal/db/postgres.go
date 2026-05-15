@@ -11,9 +11,40 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-type PostgresAdapter struct{}
+type PostgresAdapter struct {
+	dbType      string
+	displayName string
+}
 
-func (a PostgresAdapter) Name() string { return "postgres" }
+func NewPostgresAdapter(dbType, displayName string) PostgresAdapter {
+	if dbType == "" {
+		dbType = "postgres"
+	}
+	if displayName == "" {
+		displayName = "PostgreSQL"
+	}
+	return PostgresAdapter{dbType: dbType, displayName: displayName}
+}
+
+func (a PostgresAdapter) Name() string {
+	if a.dbType == "" {
+		return "postgres"
+	}
+	return a.dbType
+}
+
+func (a PostgresAdapter) Family() string { return "postgres" }
+
+func (a PostgresAdapter) DisplayName() string {
+	if a.displayName == "" {
+		return "PostgreSQL"
+	}
+	return a.displayName
+}
+
+func (a PostgresAdapter) DefaultPort() int { return 5432 }
+
+func (a PostgresAdapter) NeedsDatabaseReconnect() bool { return true }
 
 func (a PostgresAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer) (*sql.DB, error) {
 	pcfg, err := pgx.ParseConfig("")
@@ -43,7 +74,7 @@ func (a PostgresAdapter) Open(ctx context.Context, cfg Config, dialer ContextDia
 }
 
 func (a PostgresAdapter) ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error) {
-	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: "postgres", Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
+	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: a.DisplayName(), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
 	row := db.QueryRowContext(ctx, `SELECT version(), current_user, current_database(), now()::text, inet_server_addr()::text, inet_server_port()::text, current_setting('server_encoding')`)
 	var serverAddr, serverPort, encoding sql.NullString
 	if err := row.Scan(&info.Version, &info.CurrentUser, &info.CurrentDB, &info.ServerTime, &serverAddr, &serverPort, &encoding); err != nil {

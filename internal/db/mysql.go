@@ -14,9 +14,40 @@ import (
 
 var mysqlDialID atomic.Uint64
 
-type MySQLAdapter struct{}
+type MySQLAdapter struct {
+	dbType      string
+	displayName string
+}
 
-func (a MySQLAdapter) Name() string { return "mysql" }
+func NewMySQLAdapter(dbType, displayName string) MySQLAdapter {
+	if dbType == "" {
+		dbType = "mysql"
+	}
+	if displayName == "" {
+		displayName = "MySQL"
+	}
+	return MySQLAdapter{dbType: dbType, displayName: displayName}
+}
+
+func (a MySQLAdapter) Name() string {
+	if a.dbType == "" {
+		return "mysql"
+	}
+	return a.dbType
+}
+
+func (a MySQLAdapter) Family() string { return "mysql" }
+
+func (a MySQLAdapter) DisplayName() string {
+	if a.displayName == "" {
+		return "MySQL"
+	}
+	return a.displayName
+}
+
+func (a MySQLAdapter) DefaultPort() int { return 3306 }
+
+func (a MySQLAdapter) NeedsDatabaseReconnect() bool { return false }
 
 func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer) (*sql.DB, error) {
 	netName := "tcp"
@@ -49,7 +80,7 @@ func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer
 }
 
 func (a MySQLAdapter) ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error) {
-	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: "mysql", Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
+	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: a.DisplayName(), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
 	row := db.QueryRowContext(ctx, "SELECT VERSION(), CURRENT_USER(), DATABASE(), NOW(), @@version_comment, @@hostname, @@character_set_server")
 	var currentDB sql.NullString
 	var versionComment, hostname, charset string

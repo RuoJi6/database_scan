@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"database_scan/internal/db"
+
 	"golang.org/x/term"
 )
 
@@ -68,18 +70,15 @@ func parseArgs(args []string) (Config, error) {
 	if err := normalizeTarget(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.Port == 0 {
-		switch cfg.Type {
-		case "mysql":
-			cfg.Port = 3306
-		case "mssql":
-			cfg.Port = 1433
-		case "postgres", "postgresql":
-			cfg.Port = 5432
-		}
-	}
 	if cfg.Type == "" || cfg.Host == "" || cfg.User == "" {
 		return cfg, fmt.Errorf("--type, --host and --user are required")
+	}
+	if cfg.Port == 0 {
+		adapter, err := db.NewAdapter(cfg.Type)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Port = adapter.DefaultPort()
 	}
 	if cfg.Password == "" {
 		fmt.Fprint(os.Stderr, "Password: ")

@@ -6,7 +6,7 @@
 
 ## 支持能力
 
-- 数据库：MySQL/MariaDB/TiDB、MSSQL、PostgreSQL
+- 数据库：MySQL/MariaDB/TiDB、MSSQL、PostgreSQL、Oracle，以及多种 MySQL/PostgreSQL 协议兼容国产数据库
 - 代理：直连、SOCKS5、HTTP CONNECT
 - 认证：命令行密码或隐藏交互输入
 - 输出：连接信息、按表分组的敏感字段、存在行数和类似 SQL 查询结果的整行真实样例值
@@ -49,6 +49,20 @@ go build -o database_scan ./cmd/database_scan
 ```
 
 ```bash
+./database_scan --type oceanbase --host 198.51.100.20 --user dev --password pass --database appdb --output result.xlsx
+```
+
+```bash
+./database_scan --type opengauss --host 198.51.100.30 --user dev --password pass --database appdb --table public.users
+```
+
+Oracle 的 `--database` 表示 service name：
+
+```bash
+./database_scan --type oracle --host 198.51.100.40 --user system --password pass --database ORCL
+```
+
+```bash
 ./database_scan --type mssql --host 192.0.2.10 --user sa --password pass --database appdb
 ```
 
@@ -62,7 +76,7 @@ go build -o database_scan ./cmd/database_scan
 
 ## 参数
 
-- `--type mysql|mssql|postgres`：数据库类型
+- `--type`：数据库类型，见下方支持列表
 - `--host` / `--port`：目标地址和端口，端口不填时使用默认端口；也支持 `--host host:port` 或位置参数 `host:port`
 - `--user` / `--password`：账号密码；密码不填时交互输入
 - `--database`：指定要扫描的单个数据库；不指定时列举并扫描全部可访问数据库
@@ -78,6 +92,15 @@ go build -o database_scan ./cmd/database_scan
 - `--timeout`：单查询超时，默认 15s
 - `--sql`：执行自定义 SQL；按需求原样执行，不限制为只读
 
+## 支持数据库类型
+
+- 原生支持：`mysql`、`mariadb`、`mssql`、`sqlserver`、`postgres`、`postgresql`、`oracle`、`go-ora`
+- MySQL 协议兼容：`tidb`、`oceanbase`、`oceanbase-mysql`、`polardb-mysql`、`doris`、`starrocks`、`gbase-mysql`
+- PostgreSQL 协议兼容：`opengauss`、`gaussdb`、`kingbase`、`kingbasees`、`highgo`、`polardb-postgres`
+- 默认端口：MySQL 协议族 `3306`，MSSQL `1433`，PostgreSQL 协议族 `5432`，Oracle `1521`
+
+协议兼容数据库会复用 MySQL 或 PostgreSQL 的连接协议、代理拨号和元数据扫描方式。达梦 DM、GBase 8s、神通等需要专用驱动、ODBC、CGO 或无法确认代理拨号能力的数据库暂不内置，避免破坏当前多平台发布包。
+
 ## 密码说明
 
 - 数据库密码可以通过 `--password` 传入，也可以省略该参数后在提示中隐藏输入。
@@ -91,3 +114,4 @@ go build -o database_scan ./cmd/database_scan
 
 默认会完整展示敏感样例值，用于截图证明数据存在；如需降低暴露风险，请加 `--mask`。
 扫描过程中按 `Ctrl+C` 会停止后续扫描，并尽量输出和写入已经扫描完成的表结果。
+GitHub Actions 仅在推送 `v*` tag 时触发自动测试、构建和 Release；普通 main push 不触发发布流程。

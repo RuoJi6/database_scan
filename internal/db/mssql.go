@@ -16,6 +16,14 @@ type MSSQLAdapter struct{}
 
 func (a MSSQLAdapter) Name() string { return "mssql" }
 
+func (a MSSQLAdapter) Family() string { return "mssql" }
+
+func (a MSSQLAdapter) DisplayName() string { return "MSSQL" }
+
+func (a MSSQLAdapter) DefaultPort() int { return 1433 }
+
+func (a MSSQLAdapter) NeedsDatabaseReconnect() bool { return false }
+
 func (a MSSQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer) (*sql.DB, error) {
 	db, err := a.open(ctx, cfg, dialer, "disable")
 	if err == nil {
@@ -68,7 +76,7 @@ func isMSSQLTLSHandshakeError(err error) bool {
 }
 
 func (a MSSQLAdapter) ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error) {
-	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: "mssql", Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
+	info := ServerInfo{Host: cfg.Host, Port: cfg.Port, DBType: a.DisplayName(), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Environment: map[string]string{}}
 	row := db.QueryRowContext(ctx, `SELECT @@VERSION, SYSTEM_USER, DB_NAME(), CONVERT(varchar(30), SYSDATETIME(), 126), SERVERPROPERTY('MachineName'), SERVERPROPERTY('Edition'), SERVERPROPERTY('Collation')`)
 	var machine, edition, collation sql.NullString
 	if err := row.Scan(&info.Version, &info.CurrentUser, &info.CurrentDB, &info.ServerTime, &machine, &edition, &collation); err != nil {
