@@ -15,6 +15,11 @@
   - `field-name`：只检索敏感表名/字段名
   - `content`：扫描字段内容
   - `all`：执行全部模式
+- 敏感级别：
+  - `high`：身份证、密码/密钥、银行卡
+  - `medium`：手机号、邮箱
+  - `low`：地址、用户名/账号
+  - `all`：全部级别，默认值
 
 ## 构建
 
@@ -46,6 +51,12 @@ go build -o database_scan ./cmd/database_scan
 
 ```bash
 ./database_scan --type postgres --host 198.51.100.10 --user dev --password pass --mode content --limit 15
+```
+
+只检索最高敏级别：
+
+```bash
+./database_scan --type mysql --host 127.0.0.1 --user root --password pass --level high
 ```
 
 ```bash
@@ -83,6 +94,7 @@ Oracle 的 `--database` 表示 service name：
 - `--table`：只扫描指定数据库中的某一张表，需要同时指定 `--database`；支持 `Users` 或 `dbo.Users`
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
+- `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡等最高敏信息
 - `--limit`：每张命中表最多展示整行样例数量，默认 15
 - `--include-system`：包含系统库
 - `--mask`：样例值脱敏显示

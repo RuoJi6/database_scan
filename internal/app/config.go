@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"database_scan/internal/db"
+	"database_scan/internal/detector"
 
 	"golang.org/x/term"
 )
@@ -24,6 +25,7 @@ type Config struct {
 	Table         string
 	Proxy         string
 	Mode          string
+	Level         detector.Level
 	Limit         int
 	SQL           string
 	Output        string
@@ -35,7 +37,7 @@ type Config struct {
 }
 
 func parseArgs(args []string) (Config, error) {
-	cfg := Config{Mode: "field-content", Limit: 15, Workers: 4, Timeout: 15 * time.Second}
+	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 4, Timeout: 15 * time.Second}
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
 	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres")
@@ -47,6 +49,8 @@ func parseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.Table, "table", "", "scan only this table; supports table or schema.table")
 	fs.StringVar(&cfg.Proxy, "proxy", "", "proxy url: socks5://user:pass@host:port or http://user:pass@host:port")
 	fs.StringVar(&cfg.Mode, "mode", "field-content", "scan mode: field-content, field-name, content, all")
+	level := string(cfg.Level)
+	fs.StringVar(&level, "level", string(detector.LevelAll), "sensitive level: all, high, medium, low")
 	fs.IntVar(&cfg.Limit, "limit", 15, "max sample rows to display")
 	fs.StringVar(&cfg.SQL, "sql", "", "custom SQL to execute")
 	fs.StringVar(&cfg.Output, "output", "", "write scan result to .xlsx file")
@@ -67,6 +71,11 @@ func parseArgs(args []string) (Config, error) {
 	}
 	cfg.Type = strings.ToLower(strings.TrimSpace(cfg.Type))
 	cfg.Mode = strings.ToLower(strings.TrimSpace(cfg.Mode))
+	parsedLevel, ok := detector.ParseLevel(level)
+	if !ok {
+		return cfg, fmt.Errorf("unsupported --level %q", level)
+	}
+	cfg.Level = parsedLevel
 	if err := normalizeTarget(&cfg); err != nil {
 		return cfg, err
 	}
@@ -136,7 +145,7 @@ func normalizeTarget(cfg *Config) error {
 func splitTargetArg(args []string) ([]string, string) {
 	valueFlags := map[string]bool{
 		"type": true, "host": true, "port": true, "user": true, "password": true,
-		"database": true, "table": true, "proxy": true, "mode": true, "limit": true, "output": true, "workers": true,
+		"database": true, "table": true, "proxy": true, "mode": true, "level": true, "limit": true, "output": true, "workers": true,
 		"timeout": true, "sql": true,
 	}
 	out := make([]string, 0, len(args))

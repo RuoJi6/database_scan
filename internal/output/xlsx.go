@@ -71,10 +71,10 @@ func buildSheets(result scanner.Result) []xlsxSheet {
 			cells("实际数据行数", strconv.FormatInt(table.Total, 10)),
 			{},
 			cells("敏感字段清单"),
-			cells("字段名", "疑似类型", "判断依据", "字段非空行数"),
+			cells("字段名", "疑似类型", "敏感级别", "判断依据", "字段非空行数"),
 		}
 		for _, field := range table.Fields {
-			rows = append(rows, []xlsxCell{{Value: field.Name, Style: styleForKinds(field.Kinds)}, {Value: scanner.KindLabel(field.Kinds)}, {Value: scanner.ModeLabel(field.Mode)}, {Value: strconv.FormatInt(field.Total, 10)}})
+			rows = append(rows, []xlsxCell{{Value: field.Name, Style: styleForKinds(field.Kinds)}, {Value: scanner.KindLabel(field.Kinds)}, {Value: scanner.LevelLabelForField(field)}, {Value: scanner.ModeLabel(field.Mode)}, {Value: strconv.FormatInt(field.Total, 10)}})
 		}
 		rows = append(rows, []xlsxCell{}, cells("真实样例数据"))
 		headers, sampleRows := scanner.RowSampleRows(table, false)
@@ -100,7 +100,7 @@ func summaryRows(tables []scanner.TableResult) [][]xlsxCell {
 		)
 		for _, field := range table.Fields {
 			rows = append(rows, []xlsxCell{
-				{Value: scanner.KindLabel(field.Kinds) + "："},
+				{Value: scanner.KindLabel(field.Kinds) + "（" + scanner.LevelLabelForField(field) + "）："},
 				{Value: field.Name, Style: styleForKinds(field.Kinds)},
 				{Value: fmt.Sprintf("（存在行数：%d）", field.Total)},
 			})

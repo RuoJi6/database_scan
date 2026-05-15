@@ -26,7 +26,7 @@ func TestSummaryRowsUsesDisplayModeLabel(t *testing.T) {
 		Mode:     FieldContent,
 		Total:    3,
 	}})
-	if rows[0][5] != "字段名命中+内容抽样" {
+	if rows[0][6] != "字段名命中+内容抽样" {
 		t.Fatalf("unexpected mode label: %#v", rows[0])
 	}
 }
@@ -88,7 +88,7 @@ func TestTableRowsKeepSameTableFindingsTogether(t *testing.T) {
 		},
 	}
 	fieldRows := TableFieldRows(findings)
-	if len(fieldRows) != 2 || fieldRows[0][0] != "Phone" || fieldRows[0][3] != "2" {
+	if len(fieldRows) != 2 || fieldRows[0][0] != "Phone" || fieldRows[0][4] != "2" {
 		t.Fatalf("unexpected field rows: %#v", fieldRows)
 	}
 	sampleRows := TableSampleRows(findings)
@@ -121,11 +121,23 @@ func TestSensitiveFieldRowsOnlyColorsFieldName(t *testing.T) {
 		Kinds: []detector.Kind{detector.BankCard},
 		Total: 698,
 	}}, true)
-	if rows[0][0][:len("银行卡：")] != "银行卡：" {
+	if rows[0][0][:len("银行卡（高敏）：")] != "银行卡（高敏）：" {
 		t.Fatalf("kind label should not be colored: %q", rows[0][0])
 	}
 	if rows[0][0] == "银行卡：accbank" {
 		t.Fatalf("field name should be colored when color is enabled")
+	}
+}
+
+func TestSensitiveColumnsByLevel(t *testing.T) {
+	columns := []db.Column{
+		{Table: "Users", Name: "mobile_phone"},
+		{Table: "Users", Name: "password_hash"},
+		{Table: "Users", Name: "address"},
+	}
+	got := sensitiveColumnsByLevel(columns, detector.LevelHigh)
+	if len(got) != 1 || got[0].Name != "password_hash" {
+		t.Fatalf("unexpected high-level columns: %#v", got)
 	}
 }
 

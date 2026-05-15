@@ -26,6 +26,7 @@ const (
 
 type Options struct {
 	Mode          Mode
+	Level         detector.Level
 	Limit         int
 	Workers       int
 	Timeout       time.Duration
@@ -42,6 +43,7 @@ type Summary struct {
 	Table    string
 	Column   string
 	Kind     detector.Kind
+	Level    detector.Level
 	Mode     Mode
 	Total    int64
 }
@@ -52,6 +54,7 @@ type Sample struct {
 	Table    string
 	Column   string
 	Kind     detector.Kind
+	Level    detector.Level
 	Mode     Mode
 	Value    string
 }
@@ -76,6 +79,7 @@ type TableResult struct {
 type FieldResult struct {
 	Name  string
 	Kinds []detector.Kind
+	Level detector.Level
 	Mode  Mode
 	Total int64
 }
@@ -151,7 +155,7 @@ func Scan(ctx context.Context, base *sql.DB, adapter db.Adapter, databases []str
 			}
 			continue
 		}
-		progressf(opts.Progress, "数据库 %s: 发现 %d 个可扫描字段，%d 个字段名命中规则，开始扫描...\n", database, len(columns), matchingFieldCount(columns))
+		progressf(opts.Progress, "数据库 %s: 发现 %d 个可扫描字段，%d 个字段名命中规则，开始扫描...\n", database, len(columns), matchingFieldCountByLevel(columns, opts.Level))
 		scanTables(ctx, queryDB, adapter, columns, opts, &result, &mu)
 		progressf(opts.Progress, "数据库 %s: 扫描完成。\n", database)
 		stopCloseOnCancel()
@@ -163,9 +167,13 @@ func Scan(ctx context.Context, base *sql.DB, adapter db.Adapter, databases []str
 }
 
 func matchingFieldCount(columns []db.Column) int {
+	return matchingFieldCountByLevel(columns, detector.LevelAll)
+}
+
+func matchingFieldCountByLevel(columns []db.Column, level detector.Level) int {
 	total := 0
 	for _, col := range columns {
-		if len(detector.FieldKinds(col.Table, col.Name)) > 0 {
+		if len(detector.FieldKindsByLevel(level, col.Table, col.Name)) > 0 {
 			total++
 		}
 	}
@@ -236,7 +244,7 @@ func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns 
 	tableCols := groupColumnsByTable(columns)
 	keys := make([]string, 0, len(tableCols))
 	for key := range tableCols {
-		if len(sensitiveColumns(tableCols[key])) > 0 {
+		if len(sensitiveColumnsByLevel(tableCols[key], opts.Level)) > 0 {
 			keys = append(keys, key)
 		}
 	}
@@ -247,7 +255,7 @@ func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns 
 			return
 		}
 		allCols := tableCols[key]
-		conditionCols := sensitiveColumns(allCols)
+		conditionCols := sensitiveColumnsByLevel(allCols, opts.Level)
 		tableName := allCols[0].Schema + "." + allCols[0].Table
 		progressf(opts.Progress, "扫描进度 %s: 表 %d/%d %s（字段 %d，敏感候选 %d）\n", allCols[0].Database, i+1, len(keys), tableName, len(allCols), len(conditionCols))
 		tableResult := TableResult{Database: allCols[0].Database, Schema: allCols[0].Schema, Name: allCols[0].Table, Columns: columnNames(allCols)}
@@ -262,7 +270,7 @@ func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns 
 				addScanError(result, mu, fmt.Sprintf("scan interrupted: %v", err))
 				return
 			}
-			kinds := detector.FieldKinds(col.Table, col.Name)
+			kinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
 			progressf(opts.Progress, "  字段 %d/%d %s.%s: 统计中...\n", j+1, len(conditionCols), tableName, col.Name)
 			total, err := queryNonEmptyCount(ctx, sqlDB, adapter, col, opts)
 			if err != nil {
@@ -273,9 +281,9 @@ func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns 
 			if total <= 0 {
 				continue
 			}
-			tableResult.Fields = append(tableResult.Fields, FieldResult{Name: col.Name, Kinds: kinds, Mode: FieldContent, Total: total})
+			tableResult.Fields = append(tableResult.Fields, FieldResult{Name: col.Name, Kinds: kinds, Level: highestLevel(kinds), Mode: FieldContent, Total: total})
 			for _, kind := range kinds {
-				addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: FieldContent, Total: total})
+				addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldContent, Total: total})
 			}
 		}
 		if len(tableResult.Fields) == 0 {
@@ -317,9 +325,13 @@ func groupColumnsByTable(columns []db.Column) map[string][]db.Column {
 }
 
 func sensitiveColumns(columns []db.Column) []db.Column {
+	return sensitiveColumnsByLevel(columns, detector.LevelAll)
+}
+
+func sensitiveColumnsByLevel(columns []db.Column, level detector.Level) []db.Column {
 	var out []db.Column
 	for _, col := range columns {
-		if len(detector.FieldKinds(col.Table, col.Name)) > 0 {
+		if len(detector.FieldKindsByLevel(level, col.Table, col.Name)) > 0 {
 			out = append(out, col)
 		}
 	}
@@ -327,11 +339,11 @@ func sensitiveColumns(columns []db.Column) []db.Column {
 }
 
 func scanColumn(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db.Column, opts Options, result *Result, mu *sync.Mutex) {
-	fieldKinds := detector.FieldKinds(col.Table, col.Name)
+	fieldKinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
 	if opts.Mode == FieldName || opts.Mode == All {
 		for _, kind := range fieldKinds {
-			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: FieldName, Total: 1})
-			addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: FieldName, Value: col.Name}, opts.Mask)
+			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldName, Total: 1})
+			addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldName, Value: col.Name}, opts.Mask)
 		}
 	}
 	if (opts.Mode == FieldContent || opts.Mode == All) && len(fieldKinds) > 0 {
@@ -341,9 +353,9 @@ func scanColumn(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db.C
 			return
 		}
 		for _, kind := range fieldKinds {
-			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: FieldContent, Total: total})
+			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldContent, Total: total})
 			for _, value := range samples {
-				addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: FieldContent, Value: value}, opts.Mask)
+				addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldContent, Value: value}, opts.Mask)
 			}
 		}
 	}
@@ -356,15 +368,15 @@ func scanColumn(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db.C
 		countByKind := map[detector.Kind]int64{}
 		valuesByKind := map[detector.Kind][]string{}
 		for _, value := range samples {
-			for _, kind := range detector.ContentKinds(value) {
+			for _, kind := range detector.ContentKindsByLevel(opts.Level, value) {
 				countByKind[kind]++
 				valuesByKind[kind] = append(valuesByKind[kind], value)
 			}
 		}
 		for kind, total := range countByKind {
-			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: Content, Total: total})
+			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: Content, Total: total})
 			for _, value := range limitStrings(valuesByKind[kind], opts.Limit) {
-				addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Mode: Content, Value: value}, opts.Mask)
+				addSample(result, mu, Sample{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: Content, Value: value}, opts.Mask)
 			}
 		}
 	}
@@ -445,7 +457,7 @@ func querySampleRows(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, sel
 func queryContent(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db.Column, opts Options) ([]string, error) {
 	qctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	query, args := adapter.ContentRegexSQL(col, detector.SQLPattern())
+	query, args := adapter.ContentRegexSQL(col, detector.SQLPatternByLevel(opts.Level))
 	rows, err := sqlDB.QueryContext(qctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -501,7 +513,7 @@ func addScanError(result *Result, mu *sync.Mutex, message string) {
 func SummaryRows(summaries []Summary) [][]string {
 	rows := make([][]string, 0, len(summaries))
 	for _, s := range summaries {
-		rows = append(rows, []string{s.Database, s.Schema, s.Table, s.Column, string(s.Kind), ModeLabel(s.Mode), strconv.FormatInt(s.Total, 10)})
+		rows = append(rows, []string{s.Database, s.Schema, s.Table, s.Column, string(s.Kind), detector.LevelLabel(summaryLevel(s)), ModeLabel(s.Mode), strconv.FormatInt(s.Total, 10)})
 	}
 	return rows
 }
@@ -509,7 +521,7 @@ func SummaryRows(summaries []Summary) [][]string {
 func SampleRows(samples []Sample) [][]string {
 	rows := make([][]string, 0, len(samples))
 	for _, s := range samples {
-		rows = append(rows, []string{s.Database, s.Schema, s.Table, s.Column, string(s.Kind), ModeLabel(s.Mode), s.Value})
+		rows = append(rows, []string{s.Database, s.Schema, s.Table, s.Column, string(s.Kind), detector.LevelLabel(sampleLevel(s)), ModeLabel(s.Mode), s.Value})
 	}
 	return rows
 }
@@ -558,14 +570,14 @@ func FindingsByDatabase(result Result) []DatabaseFindings {
 }
 
 func FindingSummaryRows(summary Summary) [][]string {
-	return [][]string{{summary.Database, summary.Schema, summary.Table, summary.Column, string(summary.Kind), ModeLabel(summary.Mode), strconv.FormatInt(summary.Total, 10)}}
+	return [][]string{{summary.Database, summary.Schema, summary.Table, summary.Column, string(summary.Kind), detector.LevelLabel(summaryLevel(summary)), ModeLabel(summary.Mode), strconv.FormatInt(summary.Total, 10)}}
 }
 
 func TableFieldRows(findings []Finding) [][]string {
 	rows := make([][]string, 0, len(findings))
 	for _, finding := range findings {
 		summary := finding.Summary
-		rows = append(rows, []string{summary.Column, string(summary.Kind), ModeLabel(summary.Mode), strconv.FormatInt(summary.Total, 10)})
+		rows = append(rows, []string{summary.Column, string(summary.Kind), detector.LevelLabel(summaryLevel(summary)), ModeLabel(summary.Mode), strconv.FormatInt(summary.Total, 10)})
 	}
 	return rows
 }
@@ -573,7 +585,7 @@ func TableFieldRows(findings []Finding) [][]string {
 func SensitiveFieldRows(fields []FieldResult, color bool) [][]string {
 	rows := make([][]string, 0, len(fields))
 	for _, field := range fields {
-		rows = append(rows, []string{KindLabel(field.Kinds) + "：" + ColorizeField(field.Name, field.Kinds, color), strconv.FormatInt(field.Total, 10)})
+		rows = append(rows, []string{KindLabel(field.Kinds) + "（" + detector.LevelLabel(fieldLevel(field)) + "）：" + ColorizeField(field.Name, field.Kinds, color), strconv.FormatInt(field.Total, 10)})
 	}
 	return rows
 }
@@ -621,6 +633,47 @@ func KindLabel(kinds []detector.Kind) string {
 		labels = append(labels, string(kind))
 	}
 	return strings.Join(labels, "/")
+}
+
+func LevelLabelForField(field FieldResult) string {
+	return detector.LevelLabel(fieldLevel(field))
+}
+
+func fieldLevel(field FieldResult) detector.Level {
+	if field.Level != "" {
+		return field.Level
+	}
+	return highestLevel(field.Kinds)
+}
+
+func summaryLevel(summary Summary) detector.Level {
+	if summary.Level != "" {
+		return summary.Level
+	}
+	return detector.LevelOf(summary.Kind)
+}
+
+func sampleLevel(sample Sample) detector.Level {
+	if sample.Level != "" {
+		return sample.Level
+	}
+	return detector.LevelOf(sample.Kind)
+}
+
+func highestLevel(kinds []detector.Kind) detector.Level {
+	level := detector.LevelLow
+	for _, kind := range kinds {
+		switch detector.LevelOf(kind) {
+		case detector.LevelHigh:
+			return detector.LevelHigh
+		case detector.LevelMedium:
+			level = detector.LevelMedium
+		}
+	}
+	if len(kinds) == 0 {
+		return ""
+	}
+	return level
 }
 
 func TableSampleRows(findings []Finding) [][]string {

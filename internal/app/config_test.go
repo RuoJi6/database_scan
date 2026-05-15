@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"database_scan/internal/db"
+	"database_scan/internal/detector"
 )
 
 func TestParseArgsAcceptsHostPortInHostFlag(t *testing.T) {
@@ -117,6 +118,35 @@ func TestParseArgsNoColor(t *testing.T) {
 	}
 	if !cfg.NoColor {
 		t.Fatal("expected --no-color to be enabled")
+	}
+}
+
+func TestParseArgsAcceptsLevel(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mssql",
+		"--host", "192.0.2.10",
+		"--user", "sa",
+		"--password", "secret",
+		"--level", "high",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Level != detector.LevelHigh {
+		t.Fatalf("unexpected level: %s", cfg.Level)
+	}
+}
+
+func TestParseArgsRejectsUnknownLevel(t *testing.T) {
+	_, err := parseArgs([]string{
+		"--type", "mssql",
+		"--host", "192.0.2.10",
+		"--user", "sa",
+		"--password", "secret",
+		"--level", "unknown",
+	})
+	if err == nil {
+		t.Fatal("expected unknown level to be rejected")
 	}
 }
 

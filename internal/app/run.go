@@ -113,7 +113,7 @@ func Run(ctx context.Context, args []string) error {
 	partial := scanner.Result{}
 	result := scanner.Scan(scanCtx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
-		Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: os.Stderr,
+		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: os.Stderr,
 		OnTable: func(table scanner.TableResult) {
 			partialMu.Lock()
 			partial.Tables = append(partial.Tables, table)

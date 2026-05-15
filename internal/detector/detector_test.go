@@ -9,6 +9,13 @@ func TestFieldKinds(t *testing.T) {
 	}
 }
 
+func TestFieldKindsByLevel(t *testing.T) {
+	kinds := FieldKindsByLevel(LevelHigh, "users", "mobile_phone", "password_hash")
+	if len(kinds) != 1 || kinds[0] != Password {
+		t.Fatalf("unexpected high-level kinds: %#v", kinds)
+	}
+}
+
 func TestContentKinds(t *testing.T) {
 	kinds := ContentKinds("张三 13800138000 test@example.com")
 	seen := map[Kind]bool{}
@@ -17,6 +24,24 @@ func TestContentKinds(t *testing.T) {
 	}
 	if !seen[Phone] || !seen[Email] {
 		t.Fatalf("expected phone and email, got %#v", kinds)
+	}
+}
+
+func TestContentKindsByLevel(t *testing.T) {
+	kinds := ContentKindsByLevel(LevelMedium, "11010119900101123X 13800138000 test@example.com")
+	seen := map[Kind]bool{}
+	for _, k := range kinds {
+		seen[k] = true
+	}
+	if seen[IDCard] || !seen[Phone] || !seen[Email] {
+		t.Fatalf("unexpected medium-level kinds: %#v", kinds)
+	}
+}
+
+func TestParseLevel(t *testing.T) {
+	level, ok := ParseLevel("最敏感")
+	if !ok || level != LevelHigh {
+		t.Fatalf("unexpected parsed level: %q %v", level, ok)
 	}
 }
 
