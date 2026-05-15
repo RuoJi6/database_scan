@@ -59,11 +59,12 @@ type xlsxCell struct {
 
 func buildSheets(result scanner.Result) []xlsxSheet {
 	used := map[string]int{}
-	sheets := make([]xlsxSheet, 0, len(result.Tables)+1)
-	if len(result.Tables) > 0 {
-		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName("敏感信息汇总", used), Rows: summaryRows(result.Tables)})
+	sqlTables, redisTables := splitResultTables(result.Tables)
+	sheets := make([]xlsxSheet, 0, len(result.Tables)+3)
+	if len(sqlTables) > 0 {
+		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName("敏感信息汇总", used), Rows: summaryRows(sqlTables)})
 	}
-	for _, table := range result.Tables {
+	for _, table := range sqlTables {
 		rows := [][]xlsxCell{
 			cells("数据库", table.Database),
 			cells("Schema", table.Schema),
@@ -82,7 +83,94 @@ func buildSheets(result scanner.Result) []xlsxSheet {
 		rows = append(rows, styledSampleRows(headers, sampleRows, table)...)
 		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName(table.Schema+"."+table.Name, used), Rows: rows})
 	}
+	if len(redisTables) > 0 {
+		sheets = append(sheets, buildRedisSheets(redisTables, used)...)
+	}
 	return sheets
+}
+
+func splitResultTables(tables []scanner.TableResult) ([]scanner.TableResult, []scanner.TableResult) {
+	var sqlTables []scanner.TableResult
+	var redisTables []scanner.TableResult
+	for _, table := range tables {
+		if table.Schema == "redis-key" {
+			redisTables = append(redisTables, table)
+		} else {
+			sqlTables = append(sqlTables, table)
+		}
+	}
+	return sqlTables, redisTables
+}
+
+func buildRedisSheets(tables []scanner.TableResult, used map[string]int) []xlsxSheet {
+	var sheets []xlsxSheet
+	if len(tables) > 0 {
+		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName("Redis 汇总", used), Rows: redisSummaryRows(tables)})
+		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName("Redis Keys", used), Rows: redisKeyRows(tables)})
+	}
+	return sheets
+}
+
+func redisSummaryRows(tables []scanner.TableResult) [][]xlsxCell {
+	rows := [][]xlsxCell{
+		cells("Redis 敏感 Key 汇总"),
+		{},
+		cells("Target", "DB", "Key", "Type", "TTL", "Path/Field", "命中类型", "敏感级别", "判断依据"),
+	}
+	for _, table := range tables {
+		if len(table.Rows) == 0 {
+			continue
+		}
+		sample := table.Rows[0].Values
+		rows = append(rows, []xlsxCell{
+			{Value: sample["Target"]},
+			{Value: sample["DB"]},
+			{Value: sample["Key"]},
+			{Value: sample["Type"]},
+			{Value: sample["TTL"]},
+			{Value: sample["Path/Field"]},
+			{Value: sample["命中类型"], Style: redisValueStyle(table)},
+			{Value: sample["敏感级别"]},
+			{Value: sample["判断依据"]},
+		})
+	}
+	return rows
+}
+
+func redisKeyRows(tables []scanner.TableResult) [][]xlsxCell {
+	rows := [][]xlsxCell{
+		cells("Redis 敏感 Key 明细"),
+		{},
+		cells("Target", "DB", "Key", "Type", "TTL", "Path/Field", "Value", "命中类型", "敏感级别", "判断依据"),
+	}
+	for _, table := range tables {
+		if len(table.Rows) == 0 {
+			continue
+		}
+		sample := table.Rows[0].Values
+		rows = append(rows, []xlsxCell{
+			{Value: sample["Target"]},
+			{Value: sample["DB"]},
+			{Value: sample["Key"]},
+			{Value: sample["Type"]},
+			{Value: sample["TTL"]},
+			{Value: sample["Path/Field"]},
+			{Value: sample["Value"], Style: redisValueStyle(table)},
+			{Value: sample["命中类型"], Style: redisValueStyle(table)},
+			{Value: sample["敏感级别"]},
+			{Value: sample["判断依据"]},
+		})
+	}
+	return rows
+}
+
+func redisValueStyle(table scanner.TableResult) int {
+	for _, field := range table.Fields {
+		if field.Name == "value" || field.Name == "Value" {
+			return styleForKinds(field.Kinds)
+		}
+	}
+	return 0
 }
 
 func summaryRows(tables []scanner.TableResult) [][]xlsxCell {

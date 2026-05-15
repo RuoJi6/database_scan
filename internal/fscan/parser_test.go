@@ -38,6 +38,7 @@ func TestParseLineNewFormat(t *testing.T) {
 		{"[SUCCESS] MySQL 10.211.55.16:33060 root:ProdPass_2026!", "mysql", "10.211.55.16", 33060, "root", "ProdPass_2026!"},
 		{"[VULN] PostgreSQL 10.211.55.16:54320 appuser:ProdPass_2026!", "postgres", "10.211.55.16", 54320, "appuser", "ProdPass_2026!"},
 		{"MSSQL 10.211.55.16:14330 sa:ProdPass_2026!Strong", "mssql", "10.211.55.16", 14330, "sa", "ProdPass_2026!Strong"},
+		{"[SUCCESS] Redis 10.211.55.16:63790 ProdPass_2026!", "redis", "10.211.55.16", 63790, "", "ProdPass_2026!"},
 	}
 	for _, tc := range cases {
 		got, ok := ParseLine(tc.line, 1)
@@ -62,6 +63,7 @@ func TestParseLineSavedV2Format(t *testing.T) {
 		{"127.0.0.1:33060 mysql root/ProdPass_2026!", "mysql", "127.0.0.1", 33060, "root", "ProdPass_2026!"},
 		{"127.0.0.1:54320 postgresql appuser/ProdPass_2026!", "postgres", "127.0.0.1", 54320, "appuser", "ProdPass_2026!"},
 		{"127.0.0.1:14330 mssql sa/ProdPass_2026!Strong", "mssql", "127.0.0.1", 14330, "sa", "ProdPass_2026!Strong"},
+		{"127.0.0.1:63790 redis root/ProdPass_2026!", "redis", "127.0.0.1", 63790, "", "ProdPass_2026!"},
 	}
 	for _, tc := range cases {
 		got, ok := ParseLine(tc.line, 1)

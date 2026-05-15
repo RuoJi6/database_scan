@@ -84,6 +84,104 @@ func TestWriteXLSX(t *testing.T) {
 	}
 }
 
+func TestWriteXLSXRedisLayout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redis.xlsx")
+	result := scanner.Result{Tables: []scanner.TableResult{{
+		Database: "redis-db0",
+		Schema:   "redis-key",
+		Name:     "user:1001:mobile",
+		Total:    1,
+		Columns:  []string{"Target", "DB", "Key", "Type", "TTL", "Path/Field", "Value", "命中类型", "敏感级别", "判断依据"},
+		Fields: []scanner.FieldResult{
+			{Name: "value", Kinds: []detector.Kind{detector.Phone}, Mode: scanner.Content, Total: 1},
+		},
+		Rows: []scanner.RowSample{{Values: map[string]string{
+			"Target":     "127.0.0.1:6379",
+			"DB":         "0",
+			"Key":        "user:1001:mobile",
+			"Type":       "string",
+			"TTL":        "-1",
+			"Path/Field": "value",
+			"Value":      "13800138001",
+			"命中类型":       "手机号",
+			"敏感级别":       "中敏",
+			"判断依据":       "key+value",
+		}}},
+	}}}
+	if err := WriteXLSX(path, result); err != nil {
+		t.Fatalf("WriteXLSX returned error: %v", err)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open xlsx zip: %v", err)
+	}
+	defer zr.Close()
+	var body strings.Builder
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "xl/") && strings.HasSuffix(f.Name, ".xml") {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open %s: %v", f.Name, err)
+			}
+			data, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatalf("read %s: %v", f.Name, err)
+			}
+			body.Write(data)
+		}
+	}
+	text := body.String()
+	for _, want := range []string{"Redis 汇总", "Redis Keys", "Redis 敏感 Key 明细", "Target", "Path/Field", "127.0.0.1:6379", "user:1001:mobile", "13800138001"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("redis workbook missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestWriteXLSXMixedSQLAndRedisLayout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mixed.xlsx")
+	result := scanner.Result{Tables: []scanner.TableResult{
+		{
+			Database: "app",
+			Schema:   "dbo",
+			Name:     "Users",
+			Total:    1,
+			Columns:  []string{"mobile"},
+			Fields:   []scanner.FieldResult{{Name: "mobile", Kinds: []detector.Kind{detector.Phone}, Mode: scanner.FieldContent, Total: 1}},
+			Rows:     []scanner.RowSample{{Values: map[string]string{"mobile": "13800138001"}}},
+		},
+		{
+			Database: "redis-db0",
+			Schema:   "redis-key",
+			Name:     "session:token",
+			Total:    1,
+			Columns:  []string{"Target", "DB", "Key", "Type", "TTL", "Path/Field", "Value", "命中类型", "敏感级别", "判断依据"},
+			Fields:   []scanner.FieldResult{{Name: "value", Kinds: []detector.Kind{detector.Password}, Mode: scanner.Content, Total: 1}},
+			Rows: []scanner.RowSample{{Values: map[string]string{
+				"Target": "127.0.0.1:6379", "DB": "0", "Key": "session:token", "Type": "string", "TTL": "-1", "Path/Field": "value",
+				"Value": "sk_live_redis_abc", "命中类型": "密码/密钥", "敏感级别": "高敏", "判断依据": "key+value",
+			}}},
+		},
+	}}
+	if err := WriteXLSX(path, result); err != nil {
+		t.Fatalf("WriteXLSX returned error: %v", err)
+	}
+	names := SheetNamesForTest(result)
+	for _, want := range []string{"敏感信息汇总", "dbo.Users", "Redis 汇总", "Redis Keys"} {
+		found := false
+		for _, name := range names {
+			if name == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing sheet %q in %#v", want, names)
+		}
+	}
+}
+
 func TestColumnWidths(t *testing.T) {
 	rows := [][]xlsxCell{
 		cells("短", "ascii"),

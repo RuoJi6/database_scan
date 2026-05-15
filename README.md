@@ -85,6 +85,12 @@ Oracle 的 `--database` 表示 service name：
 ./database_scan --type mysql --host 127.0.0.1 --user root --password pass --sql "select user, host from mysql.user"
 ```
 
+扫描 Redis key/value 中的敏感信息：
+
+```bash
+./database_scan --type redis --host 127.0.0.1 --port 6379 --password pass --limit 20 --output redis-scan.xlsx
+```
+
 解析 fscan 扫描结果中的数据库凭据，并对所有命中的数据库一键接入扫描：
 
 ```bash
@@ -103,10 +109,10 @@ Oracle 的 `--database` 表示 service name：
 
 - `--type`：数据库类型，见下方支持列表
 - `--host` / `--port`：目标地址和端口，端口不填时使用默认端口；也支持 `--host host:port` 或位置参数 `host:port`
-- `--user` / `--password`：账号密码；密码不填时交互输入
-- `--database`：指定要扫描的单个数据库；不指定时列举并扫描全部可访问数据库
+- `--user` / `--password`：账号密码；密码不填时交互输入；Redis 可只传 `--password`
+- `--database`：指定要扫描的单个数据库；Redis 中表示 DB 编号，例如 `--database 2`
 - `--table`：只扫描指定数据库中的某一张表，需要同时指定 `--database`；支持 `Users` 或 `dbo.Users`
-- `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
+- `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle、Redis 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
 - `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡等最高敏信息
@@ -124,10 +130,12 @@ Oracle 的 `--database` 表示 service name：
 
 ## 支持数据库类型
 
-- 原生支持：`mysql`、`mariadb`、`mssql`、`sqlserver`、`postgres`、`postgresql`、`oracle`、`go-ora`
+- 原生支持：`mysql`、`mariadb`、`mssql`、`sqlserver`、`postgres`、`postgresql`、`oracle`、`go-ora`、`redis`
 - MySQL 协议兼容：`tidb`、`oceanbase`、`oceanbase-mysql`、`polardb-mysql`、`doris`、`starrocks`、`gbase-mysql`
 - PostgreSQL 协议兼容：`opengauss`、`gaussdb`、`kingbase`、`kingbasees`、`highgo`、`polardb-postgres`
-- 默认端口：MySQL 协议族 `3306`，MSSQL `1433`，PostgreSQL 协议族 `5432`，Oracle `1521`
+- 默认端口：MySQL 协议族 `3306`，MSSQL `1433`，PostgreSQL 协议族 `5432`，Oracle `1521`，Redis `6379`
+
+Redis 会按 `SCAN` 枚举 key，并按类型读取 `string`、`hash`、`list`、`set`、`zset` 的样例内容。终端和 Excel 使用 Redis 专用输出结构，列为 `Target`、`DB`、`Key`、`Type`、`TTL`、`Path/Field`、`Value`、`命中类型`、`敏感级别`、`判断依据`；Excel 会生成 `Redis 汇总` 和 `Redis Keys` 两个 Sheet。
 
 协议兼容数据库会复用 MySQL 或 PostgreSQL 的连接协议、代理拨号和元数据扫描方式。达梦 DM、GBase 8s、神通等需要专用驱动、ODBC、CGO 或无法确认代理拨号能力的数据库暂不内置，避免破坏当前多平台发布包。
 

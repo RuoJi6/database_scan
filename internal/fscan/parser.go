@@ -104,10 +104,10 @@ func parseSavedV2Line(line string, lineNo int) (Target, bool) {
 			continue
 		}
 		user, pass, ok := splitCredential(fields[i+2])
-		if !ok {
-			continue
+		if ok {
+			user, pass = normalizeRedisCredential(dbType, user, pass)
+			return Target{Type: dbType, Host: host, Port: port, User: user, Password: pass, Line: lineNo, Raw: line}, true
 		}
-		return Target{Type: dbType, Host: host, Port: port, User: user, Password: pass, Line: lineNo, Raw: line}, true
 	}
 	return Target{}, false
 }
@@ -124,10 +124,13 @@ func parseNewLine(line string, lineNo int) (Target, bool) {
 			continue
 		}
 		user, pass, ok := splitCredential(fields[i+2])
-		if !ok {
-			continue
+		if !ok && dbType == "redis" {
+			user, pass, ok = "", fields[i+2], true
 		}
-		return Target{Type: dbType, Host: host, Port: port, User: user, Password: pass, Line: lineNo, Raw: line}, true
+		if ok {
+			user, pass = normalizeRedisCredential(dbType, user, pass)
+			return Target{Type: dbType, Host: host, Port: port, User: user, Password: pass, Line: lineNo, Raw: line}, true
+		}
 	}
 	return Target{}, false
 }
@@ -174,6 +177,13 @@ func splitCredential(s string) (string, string, bool) {
 	return user, pass, true
 }
 
+func normalizeRedisCredential(dbType, user, pass string) (string, string) {
+	if dbType == "redis" && strings.EqualFold(user, "root") {
+		return "", pass
+	}
+	return user, pass
+}
+
 func normalizeType(s string) (string, bool) {
 	switch strings.ToLower(strings.Trim(strings.TrimSpace(s), "[]:+")) {
 	case "mysql":
@@ -186,6 +196,8 @@ func normalizeType(s string) (string, bool) {
 		return "mssql", true
 	case "oracle":
 		return "oracle", true
+	case "redis":
+		return "redis", true
 	default:
 		return "", false
 	}

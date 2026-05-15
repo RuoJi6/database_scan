@@ -85,6 +85,7 @@ func TestNewAdapterAliases(t *testing.T) {
 		"polardb-postgres": {"postgres", 5432, true},
 		"oracle":           {"oracle", 1521, false},
 		"go-ora":           {"oracle", 1521, false},
+		"redis":            {"redis", 6379, false},
 	}
 	for kind, want := range cases {
 		adapter, err := NewAdapter(kind)

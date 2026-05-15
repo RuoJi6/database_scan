@@ -19,6 +19,7 @@ import (
 	fscanparse "database_scan/internal/fscan"
 	"database_scan/internal/output"
 	iproxy "database_scan/internal/proxy"
+	redisscan "database_scan/internal/redis"
 	"database_scan/internal/scanner"
 )
 
@@ -40,6 +41,24 @@ func Run(ctx context.Context, args []string) error {
 }
 
 func runSingle(ctx context.Context, cfg Config) error {
+	if cfg.Type == "redis" {
+		result, err := scanRedisTarget(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		printRedisResult(result, !cfg.NoColor)
+		if cfg.Output != "" {
+			if err := output.WriteXLSX(cfg.Output, result); err != nil {
+				return fmt.Errorf("write xlsx output: %w", err)
+			}
+			outputPath, err := filepath.Abs(cfg.Output)
+			if err != nil {
+				outputPath = cfg.Output
+			}
+			fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
+		}
+		return nil
+	}
 	adapter, err := db.NewAdapter(cfg.Type)
 	if err != nil {
 		return err
@@ -188,7 +207,7 @@ func runFscan(ctx context.Context, cfg Config) error {
 		next.Table = ""
 		next.SQL = ""
 		next.Output = ""
-		result, err := scanTarget(ctx, next)
+		result, err := scanAnyTarget(ctx, next)
 		if err != nil {
 			msg := fmt.Sprintf("%s: %v", target.Label(), err)
 			fmt.Fprintf(os.Stdout, "扫描失败: %s\n", msg)
@@ -211,7 +230,11 @@ func runFscan(ctx context.Context, cfg Config) error {
 		merged.Summaries = append(merged.Summaries, result.Summaries...)
 		merged.Samples = append(merged.Samples, result.Samples...)
 		merged.Errors = append(merged.Errors, result.Errors...)
-		printScanResult(result, !cfg.NoColor)
+		if target.Type == "redis" {
+			printRedisResult(result, !cfg.NoColor)
+		} else {
+			printScanResult(result, !cfg.NoColor)
+		}
 	}
 	if cfg.Output != "" {
 		if err := output.WriteXLSX(cfg.Output, merged); err != nil {
@@ -224,6 +247,29 @@ func runFscan(ctx context.Context, cfg Config) error {
 		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
 	}
 	return nil
+}
+
+func scanAnyTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
+	if cfg.Type == "redis" {
+		return scanRedisTarget(ctx, cfg)
+	}
+	return scanTarget(ctx, cfg)
+}
+
+func scanRedisTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
+	var progressWriter = os.Stderr
+	if cfg.NoProgress {
+		progressWriter = nil
+	}
+	info, result, err := redisscan.Scan(ctx, redisscan.Config{
+		Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password, Database: cfg.Database, Proxy: cfg.Proxy,
+		Timeout: cfg.Timeout, Limit: cfg.Limit, Level: cfg.Level, Mask: cfg.Mask, Progress: progressWriter,
+	})
+	if err != nil {
+		return scanner.Result{}, err
+	}
+	printRedisInfo(info)
+	return result, nil
 }
 
 func splitOutputPath(base string, target fscanparse.Target) string {
@@ -255,6 +301,23 @@ func sanitizeFilenamePart(s string) string {
 		return "target"
 	}
 	return out
+}
+
+func printRedisInfo(info redisscan.Info) {
+	output.Section(os.Stdout, "连接信息")
+	rows := [][]string{
+		{"目标", fmt.Sprintf("%s:%d", info.Host, info.Port)},
+		{"解析IP", blank(info.ResolvedIP)},
+		{"代理", blank(info.Proxy)},
+		{"数据库类型", "Redis"},
+		{"版本", blank(info.Version)},
+		{"当前库", blank(info.DB)},
+		{"服务端时间", blank(info.ServerTime)},
+		{"模式", blank(info.Mode)},
+		{"Keyspace", blank(info.Keyspace)},
+		{"需要认证", strconv.FormatBool(info.RequireAuth)},
+	}
+	output.Table(os.Stdout, []string{"字段", "值"}, rows)
 }
 
 func scanTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
@@ -411,6 +474,51 @@ func printScanResult(result scanner.Result, color bool) {
 		}
 		output.Table(os.Stdout, []string{"错误"}, rows)
 	}
+}
+
+func printRedisResult(result scanner.Result, color bool) {
+	output.Section(os.Stdout, "Redis 敏感 Key 与样例值")
+	if len(result.Tables) == 0 {
+		fmt.Fprintln(os.Stdout, "未发现敏感 Redis key/value 命中。")
+	} else {
+		rows := make([][]string, 0, len(result.Tables))
+		for _, table := range result.Tables {
+			if len(table.Rows) == 0 {
+				continue
+			}
+			sample := table.Rows[0].Values
+			rows = append(rows, []string{
+				sample["Target"],
+				sample["DB"],
+				sample["Key"],
+				sample["Type"],
+				sample["TTL"],
+				sample["Path/Field"],
+				colorRedisValue(sample["Value"], table.Fields, color),
+				sample["命中类型"],
+				sample["敏感级别"],
+				sample["判断依据"],
+			})
+		}
+		output.Table(os.Stdout, []string{"Target", "DB", "Key", "Type", "TTL", "Path/Field", "Value", "命中类型", "敏感级别", "判断依据"}, rows)
+	}
+	if len(result.Errors) > 0 {
+		output.Section(os.Stdout, "扫描错误")
+		rows := make([][]string, 0, len(result.Errors))
+		for _, err := range result.Errors {
+			rows = append(rows, []string{err})
+		}
+		output.Table(os.Stdout, []string{"错误"}, rows)
+	}
+}
+
+func colorRedisValue(value string, fields []scanner.FieldResult, color bool) string {
+	for _, field := range fields {
+		if field.Name == "value" || field.Name == "Value" {
+			return scanner.ColorizeValue(value, field.Kinds, color)
+		}
+	}
+	return value
 }
 
 func blank(s string) string {

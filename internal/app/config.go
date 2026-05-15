@@ -55,7 +55,7 @@ func parseArgs(args []string) (Config, error) {
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres")
+	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres, redis")
 	fs.StringVar(&cfg.Host, "host", "", "database host")
 	fs.IntVar(&cfg.Port, "port", 0, "database port")
 	fs.StringVar(&cfg.User, "user", "", "database username")
@@ -104,7 +104,7 @@ func parseArgs(args []string) (Config, error) {
 	if err := normalizeTarget(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.Fscan == "" && (cfg.Type == "" || cfg.Host == "" || cfg.User == "") {
+	if cfg.Fscan == "" && (cfg.Type == "" || cfg.Host == "" || (cfg.User == "" && cfg.Type != "redis")) {
 		return cfg, fmt.Errorf("--type, --host and --user are required")
 	}
 	if cfg.Port == 0 && cfg.Type != "" {
@@ -114,7 +114,7 @@ func parseArgs(args []string) (Config, error) {
 		}
 		cfg.Port = adapter.DefaultPort()
 	}
-	if cfg.Fscan == "" && cfg.Password == "" {
+	if cfg.Fscan == "" && cfg.Password == "" && cfg.Type != "redis" {
 		fmt.Fprint(os.Stderr, "Password: ")
 		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
@@ -186,13 +186,13 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	fmt.Fprintln(w, c("90", "数据库敏感信息扫描与整行样例导出工具"))
 	fmt.Fprintf(w, "项目地址: %s\n\n", url)
 	fmt.Fprintf(w, "%s\n", section("Usage"))
-	fmt.Fprintf(w, "  %s --type <mysql|mssql|postgres|oracle|oceanbase|opengauss|kingbase> <host:port> --user <user> [options]\n\n", projectName)
+	fmt.Fprintf(w, "  %s --type <mysql|mssql|postgres|redis|oracle|oceanbase|opengauss|kingbase> <host:port> --user <user> [options]\n\n", projectName)
 	fmt.Fprintf(w, "%s\n", section("Examples"))
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb\n", projectName)
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb --table dbo.Users --output result.xlsx\n", projectName)
 	fmt.Fprintf(w, "  %s --type postgres --host 198.51.100.10 --user dev --password pass --level high --workers 4\n\n", projectName)
 	fmt.Fprintf(w, "%s\n", section("Target"))
-	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、oracle、oceanbase、opengauss、kingbase")
+	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、redis、oracle、oceanbase、opengauss、kingbase")
 	helpFlag(w, flagName("--host"), "目标地址；也支持把 host:port 作为位置参数")
 	helpFlag(w, flagName("--port"), "目标端口，不填时使用数据库默认端口")
 	helpFlag(w, flagName("--proxy"), "代理地址：socks5://... 或 http://...")

@@ -36,6 +36,8 @@ func NewAdapter(kind string) (Adapter, error) {
 		return NewPostgresAdapter("polardb-postgres", "PolarDB(PostgreSQL)"), nil
 	case "oracle", "go-ora":
 		return OracleAdapter{}, nil
+	case "redis":
+		return RedisAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported database type %q", kind)
 	}

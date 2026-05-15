@@ -284,6 +284,19 @@ func TestParseArgsAcceptsFscanWithoutSingleTarget(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsRedisWithoutUserOrPassword(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "redis",
+		"--host", "192.0.2.10",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Port != 6379 {
+		t.Fatalf("expected redis default port, got %d", cfg.Port)
+	}
+}
+
 func TestParseArgsAcceptsSplitOutputWithOutput(t *testing.T) {
 	cfg, err := parseArgs([]string{
 		"--fscan", "result.txt",
