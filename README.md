@@ -136,6 +136,10 @@ Oracle 的 `--database` 表示 service name：
 
 ![Excel 输出结果](assets/image-20260515125542123.png)
 
+## 赞助信息
+
+- `0xsdeo`：Spade sec
+
 ## 注意
 
 默认会完整展示敏感样例值，用于截图证明数据存在；如需降低暴露风险，请加 `--mask`。
