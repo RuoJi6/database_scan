@@ -50,6 +50,9 @@ func TestPrintHelpCanDisableColor(t *testing.T) {
 	if !strings.Contains(body, "--no-progress") {
 		t.Fatalf("help missing --no-progress option: %s", body)
 	}
+	if !strings.Contains(body, "--fscan") {
+		t.Fatalf("help missing --fscan option: %s", body)
+	}
 }
 
 func TestPrintHelpCanDisableBanner(t *testing.T) {
@@ -262,6 +265,19 @@ func TestParseArgsAcceptsWorkers(t *testing.T) {
 	}
 	if cfg.Workers != 6 {
 		t.Fatalf("expected workers=6, got %d", cfg.Workers)
+	}
+}
+
+func TestParseArgsAcceptsFscanWithoutSingleTarget(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--fscan", "result.txt",
+		"--password", "should-not-be-required",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Fscan != "result.txt" {
+		t.Fatalf("unexpected fscan path: %s", cfg.Fscan)
 	}
 }
 

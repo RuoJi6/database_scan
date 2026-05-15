@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"database_scan/internal/db"
+	fscanparse "database_scan/internal/fscan"
 	"database_scan/internal/output"
 	iproxy "database_scan/internal/proxy"
 	"database_scan/internal/scanner"
@@ -32,6 +33,13 @@ func Run(ctx context.Context, args []string) error {
 	if !cfg.NoBanner {
 		printBanner(os.Stdout, !cfg.NoColor && helpColorEnabled(nil))
 	}
+	if cfg.Fscan != "" {
+		return runFscan(ctx, cfg)
+	}
+	return runSingle(ctx, cfg)
+}
+
+func runSingle(ctx context.Context, cfg Config) error {
 	adapter, err := db.NewAdapter(cfg.Type)
 	if err != nil {
 		return err
@@ -156,6 +164,133 @@ func Run(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
 	}
 	return nil
+}
+
+func runFscan(ctx context.Context, cfg Config) error {
+	targets, err := fscanparse.ParseFile(cfg.Fscan)
+	if err != nil {
+		return fmt.Errorf("parse fscan result: %w", err)
+	}
+	if len(targets) == 0 {
+		return fmt.Errorf("parse fscan result: no supported database credentials found")
+	}
+	fmt.Fprintf(os.Stdout, "从 fscan 结果中解析到 %d 个数据库凭据，开始批量接入扫描。\n", len(targets))
+	merged := scanner.Result{}
+	for i, target := range targets {
+		fmt.Fprintf(os.Stdout, "\n[%d/%d] %s\n", i+1, len(targets), target.Label())
+		next := cfg
+		next.Type = target.Type
+		next.Host = target.Host
+		next.Port = target.Port
+		next.User = target.User
+		next.Password = target.Password
+		next.Database = ""
+		next.Table = ""
+		next.SQL = ""
+		next.Output = ""
+		result, err := scanTarget(ctx, next)
+		if err != nil {
+			msg := fmt.Sprintf("%s: %v", target.Label(), err)
+			fmt.Fprintf(os.Stdout, "扫描失败: %s\n", msg)
+			merged.Errors = append(merged.Errors, msg)
+			continue
+		}
+		prefixResultTables(result, target)
+		merged.Tables = append(merged.Tables, result.Tables...)
+		merged.Summaries = append(merged.Summaries, result.Summaries...)
+		merged.Samples = append(merged.Samples, result.Samples...)
+		merged.Errors = append(merged.Errors, result.Errors...)
+		printScanResult(result, !cfg.NoColor)
+	}
+	if cfg.Output != "" {
+		if err := output.WriteXLSX(cfg.Output, merged); err != nil {
+			return fmt.Errorf("write xlsx output: %w", err)
+		}
+		outputPath, err := filepath.Abs(cfg.Output)
+		if err != nil {
+			outputPath = cfg.Output
+		}
+		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
+	}
+	return nil
+}
+
+func scanTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
+	adapter, err := db.NewAdapter(cfg.Type)
+	if err != nil {
+		return scanner.Result{}, err
+	}
+	dialer, err := iproxy.FromURL(cfg.Proxy, cfg.Timeout)
+	if err != nil {
+		return scanner.Result{}, err
+	}
+	dbCfg := db.Config{
+		Type: cfg.Type, Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password,
+		Database: cfg.Database, Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
+	}
+	conn, err := adapter.Open(ctx, dbCfg, dialer)
+	if err != nil {
+		return scanner.Result{}, fmt.Errorf("connect database: %w", err)
+	}
+	defer conn.Close()
+	configureConnectionPool(conn, cfg.Workers)
+
+	infoCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	info, err := adapter.ServerInfo(infoCtx, conn, dbCfg)
+	cancel()
+	if err != nil {
+		return scanner.Result{}, fmt.Errorf("read server info: %w", err)
+	}
+	if addrs, err := net.LookupHost(cfg.Host); err == nil && len(addrs) > 0 {
+		info.ResolvedAddr = strings.Join(addrs, ",")
+	}
+	printServerInfo(info)
+
+	listCtx, listCancel := context.WithTimeout(ctx, cfg.Timeout)
+	databases, err := adapter.ListDatabases(listCtx, conn, cfg.IncludeSystem)
+	listCancel()
+	if err != nil {
+		return scanner.Result{}, fmt.Errorf("list databases: %w", err)
+	}
+	databases = scanDatabases(adapter, databases, cfg.Database)
+	if len(databases) == 0 {
+		return scanner.Result{}, nil
+	}
+	var reconnect scanner.Reconnector
+	if adapter.NeedsDatabaseReconnect() {
+		reconnect = func(ctx context.Context, database string) (*sql.DB, error) {
+			nextCfg := dbCfg
+			nextCfg.Database = database
+			nextDB, err := adapter.Open(ctx, nextCfg, dialer)
+			if err != nil {
+				return nil, err
+			}
+			configureConnectionPool(nextDB, cfg.Workers)
+			return nextDB, nil
+		}
+	}
+	var progressWriter = os.Stderr
+	if cfg.NoProgress {
+		progressWriter = nil
+	}
+	result := scanner.Scan(ctx, conn, adapter, databases, scanner.Options{
+		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
+		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: progressWriter,
+	}, reconnect)
+	return result, nil
+}
+
+func prefixResultTables(result scanner.Result, target fscanparse.Target) {
+	prefix := fmt.Sprintf("%s:%d", target.Host, target.Port)
+	for i := range result.Tables {
+		result.Tables[i].Database = prefix + "/" + result.Tables[i].Database
+	}
+	for i := range result.Summaries {
+		result.Summaries[i].Database = prefix + "/" + result.Summaries[i].Database
+	}
+	for i := range result.Samples {
+		result.Samples[i].Database = prefix + "/" + result.Samples[i].Database
+	}
 }
 
 func configureConnectionPool(conn *sql.DB, workers int) {

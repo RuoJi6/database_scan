@@ -39,6 +39,7 @@ type Config struct {
 	Limit         int
 	SQL           string
 	Output        string
+	Fscan         string
 	IncludeSystem bool
 	Mask          bool
 	NoColor       bool
@@ -67,6 +68,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.IntVar(&cfg.Limit, "limit", 15, "max sample rows to display")
 	fs.StringVar(&cfg.SQL, "sql", "", "custom SQL to execute")
 	fs.StringVar(&cfg.Output, "output", "", "write scan result to .xlsx file")
+	fs.StringVar(&cfg.Fscan, "fscan", "", "parse fscan result file and scan discovered database credentials")
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
@@ -100,17 +102,17 @@ func parseArgs(args []string) (Config, error) {
 	if err := normalizeTarget(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.Type == "" || cfg.Host == "" || cfg.User == "" {
+	if cfg.Fscan == "" && (cfg.Type == "" || cfg.Host == "" || cfg.User == "") {
 		return cfg, fmt.Errorf("--type, --host and --user are required")
 	}
-	if cfg.Port == 0 {
+	if cfg.Port == 0 && cfg.Type != "" {
 		adapter, err := db.NewAdapter(cfg.Type)
 		if err != nil {
 			return cfg, err
 		}
 		cfg.Port = adapter.DefaultPort()
 	}
-	if cfg.Password == "" {
+	if cfg.Fscan == "" && cfg.Password == "" {
 		fmt.Fprint(os.Stderr, "Password: ")
 		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
@@ -195,6 +197,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	fmt.Fprintf(w, "\n%s\n", section("Scan"))
 	helpFlag(w, flagName("--database"), "指定单个数据库；不指定时扫描全部可访问数据库")
 	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users 或 dbo.Users")
+	helpFlag(w, flagName("--fscan"), "解析 fscan 扫描结果中的数据库凭据并批量接入扫描")
 	helpFlag(w, flagName("--mode"), "扫描模式：field-content、field-name、content、all；默认 field-content")
 	helpFlag(w, flagName("--level"), "敏感级别：all、high、medium、low；默认 all")
 	helpFlag(w, flagName("--limit"), "每张命中表最多展示整行样例数量；默认 15")
@@ -276,6 +279,7 @@ func splitTargetArg(args []string) ([]string, string) {
 		"type": true, "host": true, "port": true, "user": true, "password": true,
 		"database": true, "table": true, "proxy": true, "mode": true, "level": true, "limit": true, "output": true, "workers": true,
 		"timeout": true, "sql": true,
+		"fscan": true,
 	}
 	out := make([]string, 0, len(args))
 	var target string

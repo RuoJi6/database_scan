@@ -85,6 +85,14 @@ Oracle 的 `--database` 表示 service name：
 ./database_scan --type mysql --host 127.0.0.1 --user root --password pass --sql "select user, host from mysql.user"
 ```
 
+解析 fscan 扫描结果中的数据库凭据，并对所有命中的数据库一键接入扫描：
+
+```bash
+./database_scan --fscan fscan-result.txt --workers 4 --limit 5 --output fscan-database-scan.xlsx
+```
+
+已兼容 fscan `v2.1.2` 与 `1.8.4` 的数据库成功行，包括新版保存结果中的 `host:port mysql user/pass`，以及旧版 `"[+] mysql host:port:user pass"`。
+
 ## 参数
 
 - `--type`：数据库类型，见下方支持列表
@@ -92,6 +100,7 @@ Oracle 的 `--database` 表示 service name：
 - `--user` / `--password`：账号密码；密码不填时交互输入
 - `--database`：指定要扫描的单个数据库；不指定时列举并扫描全部可访问数据库
 - `--table`：只扫描指定数据库中的某一张表，需要同时指定 `--database`；支持 `Users` 或 `dbo.Users`
+- `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
 - `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡等最高敏信息
