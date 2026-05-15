@@ -91,6 +91,12 @@ Oracle 的 `--database` 表示 service name：
 ./database_scan --fscan fscan-result.txt --workers 4 --limit 5 --output fscan-database-scan.xlsx
 ```
 
+同时生成总表和每个数据库凭据的独立表格文件：
+
+```bash
+./database_scan --fscan fscan-result.txt --workers 4 --limit 5 --output fscan-database-scan.xlsx --split-output
+```
+
 已兼容 fscan `v2.1.2` 与 `1.8.4` 的数据库成功行，包括新版保存结果中的 `host:port mysql user/pass`，以及旧版 `"[+] mysql host:port:user pass"`。
 
 ## 参数
@@ -111,6 +117,7 @@ Oracle 的 `--database` 表示 service name：
 - `--no-banner`：关闭启动随机颜文字 banner
 - `--no-progress`：关闭运行状态/扫描进度输出
 - `--output result.xlsx`：将扫描结果写入 Excel 文件；每个命中表一个 Sheet，上方是敏感字段清单，下方是整行样例数据，敏感字段和值会按风险颜色标记
+- `--split-output`：配合 `--fscan` 和 `--output` 使用，除总表外按每个数据库凭据额外生成独立 Excel 文件
 - `--workers`：按表并发扫描数量，默认 `1`，即不启用并发；例如 `--workers 4`
 - `--timeout`：单查询超时，默认 15s
 - `--sql`：执行自定义 SQL；按需求原样执行，不限制为只读

@@ -53,6 +53,9 @@ func TestPrintHelpCanDisableColor(t *testing.T) {
 	if !strings.Contains(body, "--fscan") {
 		t.Fatalf("help missing --fscan option: %s", body)
 	}
+	if !strings.Contains(body, "--split-output") {
+		t.Fatalf("help missing --split-output option: %s", body)
+	}
 }
 
 func TestPrintHelpCanDisableBanner(t *testing.T) {
@@ -278,6 +281,30 @@ func TestParseArgsAcceptsFscanWithoutSingleTarget(t *testing.T) {
 	}
 	if cfg.Fscan != "result.txt" {
 		t.Fatalf("unexpected fscan path: %s", cfg.Fscan)
+	}
+}
+
+func TestParseArgsAcceptsSplitOutputWithOutput(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--fscan", "result.txt",
+		"--output", "all.xlsx",
+		"--split-output",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if !cfg.SplitOutput {
+		t.Fatalf("expected split output to be enabled")
+	}
+}
+
+func TestParseArgsRejectsSplitOutputWithoutOutput(t *testing.T) {
+	_, err := parseArgs([]string{
+		"--fscan", "result.txt",
+		"--split-output",
+	})
+	if err == nil {
+		t.Fatalf("expected split-output without output to fail")
 	}
 }
 

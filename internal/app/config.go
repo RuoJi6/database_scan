@@ -40,6 +40,7 @@ type Config struct {
 	SQL           string
 	Output        string
 	Fscan         string
+	SplitOutput   bool
 	IncludeSystem bool
 	Mask          bool
 	NoColor       bool
@@ -69,6 +70,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.StringVar(&cfg.SQL, "sql", "", "custom SQL to execute")
 	fs.StringVar(&cfg.Output, "output", "", "write scan result to .xlsx file")
 	fs.StringVar(&cfg.Fscan, "fscan", "", "parse fscan result file and scan discovered database credentials")
+	fs.BoolVar(&cfg.SplitOutput, "split-output", false, "with --fscan and --output, also write one .xlsx per discovered database credential")
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
@@ -126,6 +128,9 @@ func parseArgs(args []string) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.Table) != "" && strings.TrimSpace(cfg.Database) == "" {
 		return cfg, fmt.Errorf("--table requires --database")
+	}
+	if cfg.SplitOutput && strings.TrimSpace(cfg.Output) == "" {
+		return cfg, fmt.Errorf("--split-output requires --output")
 	}
 	if cfg.Workers <= 0 {
 		return cfg, fmt.Errorf("--workers must be greater than 0")
@@ -206,6 +211,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	helpFlag(w, flagName("--include-system"), "包含系统库")
 	fmt.Fprintf(w, "\n%s\n", section("Output"))
 	helpFlag(w, flagName("--output"), "写入 Excel 文件；第一个 Sheet 为敏感信息汇总")
+	helpFlag(w, flagName("--split-output"), "配合 --fscan 和 --output 使用，额外为每个数据库凭据生成独立 Excel")
 	helpFlag(w, flagName("--mask"), "样例值脱敏显示")
 	helpFlag(w, flagName("--no-color"), "关闭终端颜色；也可设置 NO_COLOR=1")
 	helpFlag(w, flagName("--no-banner"), "关闭启动随机颜文字 banner")

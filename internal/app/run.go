@@ -196,6 +196,17 @@ func runFscan(ctx context.Context, cfg Config) error {
 			continue
 		}
 		prefixResultTables(result, target)
+		if cfg.SplitOutput && cfg.Output != "" {
+			splitPath := splitOutputPath(cfg.Output, target)
+			if err := output.WriteXLSX(splitPath, result); err != nil {
+				return fmt.Errorf("write split xlsx output: %w", err)
+			}
+			absSplitPath, err := filepath.Abs(splitPath)
+			if err != nil {
+				absSplitPath = splitPath
+			}
+			fmt.Fprintf(os.Stdout, "已写入独立表格文件: %s\n", absSplitPath)
+		}
 		merged.Tables = append(merged.Tables, result.Tables...)
 		merged.Summaries = append(merged.Summaries, result.Summaries...)
 		merged.Samples = append(merged.Samples, result.Samples...)
@@ -213,6 +224,37 @@ func runFscan(ctx context.Context, cfg Config) error {
 		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
 	}
 	return nil
+}
+
+func splitOutputPath(base string, target fscanparse.Target) string {
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if ext == "" {
+		ext = ".xlsx"
+	}
+	suffix := sanitizeFilenamePart(fmt.Sprintf("%s_%s_%d_%s", target.Type, target.Host, target.Port, target.User))
+	return stem + "-" + suffix + ext
+}
+
+func sanitizeFilenamePart(s string) string {
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	out := strings.Trim(b.String(), "_.-")
+	if out == "" {
+		return "target"
+	}
+	return out
 }
 
 func scanTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
