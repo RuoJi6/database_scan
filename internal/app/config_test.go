@@ -21,10 +21,13 @@ func TestParseArgsHelp(t *testing.T) {
 
 func TestPrintHelpIncludesProjectAndColor(t *testing.T) {
 	var buf bytes.Buffer
-	printHelp(&buf, true)
+	printHelp(&buf, true, true)
 	body := buf.String()
 	if !strings.Contains(body, projectName) || !strings.Contains(body, projectURL) {
 		t.Fatalf("help missing project metadata: %s", body)
+	}
+	if !strings.Contains(body, "github.com/RuoJi6/database_scan") {
+		t.Fatalf("help missing banner metadata: %s", body)
 	}
 	if !strings.Contains(body, "\x1b[") {
 		t.Fatalf("expected colored help output: %q", body)
@@ -33,7 +36,7 @@ func TestPrintHelpIncludesProjectAndColor(t *testing.T) {
 
 func TestPrintHelpCanDisableColor(t *testing.T) {
 	var buf bytes.Buffer
-	printHelp(&buf, false)
+	printHelp(&buf, false, true)
 	body := buf.String()
 	if strings.Contains(body, "\x1b[") {
 		t.Fatalf("expected plain help output: %q", body)
@@ -49,9 +52,27 @@ func TestPrintHelpCanDisableColor(t *testing.T) {
 	}
 }
 
+func TestPrintHelpCanDisableBanner(t *testing.T) {
+	var buf bytes.Buffer
+	printHelp(&buf, false, false)
+	body := buf.String()
+	if !strings.HasPrefix(body, projectName+"\n") {
+		t.Fatalf("expected help without banner: %s", body)
+	}
+	if !strings.Contains(body, "Usage") {
+		t.Fatalf("help missing usage: %s", body)
+	}
+}
+
 func TestHelpColorEnabledHonorsNoColorFlag(t *testing.T) {
 	if helpColorEnabled([]string{"--no-color", "-h"}) {
 		t.Fatal("expected --no-color to disable help colors")
+	}
+}
+
+func TestBannerEnabledHonorsNoBannerFlag(t *testing.T) {
+	if bannerEnabled([]string{"--no-banner", "-h"}) {
+		t.Fatal("expected --no-banner to disable help banner")
 	}
 }
 
@@ -70,6 +91,18 @@ func TestPrintBanner(t *testing.T) {
 	printBanner(&plain, false)
 	if strings.Contains(plain.String(), "\x1b[") {
 		t.Fatalf("expected plain banner output: %q", plain.String())
+	}
+}
+
+func TestBannerTemplates(t *testing.T) {
+	banners := bannerTemplates()
+	if len(banners) < 10 {
+		t.Fatalf("expected at least 10 banner templates, got %d", len(banners))
+	}
+	for _, banner := range banners {
+		if !strings.Contains(banner, projectName) && !strings.Contains(banner, "database_scan") {
+			t.Fatalf("banner missing project name: %s", banner)
+		}
 	}
 }
 

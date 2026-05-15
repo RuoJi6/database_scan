@@ -75,7 +75,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.IntVar(&cfg.Workers, "workers", 1, "scan workers; 1 disables parallel table scanning")
 	fs.DurationVar(&cfg.Timeout, "timeout", 15*time.Second, "single query timeout")
 	fs.Usage = func() {
-		printHelp(os.Stdout, helpColorEnabled(args))
+		printHelp(os.Stdout, helpColorEnabled(args), bannerEnabled(args))
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -152,7 +152,19 @@ func helpColorEnabled(args []string) bool {
 	return true
 }
 
-func printHelp(w io.Writer, color bool) {
+func bannerEnabled(args []string) bool {
+	for _, arg := range args {
+		if arg == "--no-banner" || arg == "-no-banner" {
+			return false
+		}
+	}
+	return true
+}
+
+func printHelp(w io.Writer, color bool, banner bool) {
+	if banner {
+		printBanner(w, color)
+	}
 	c := func(code, s string) string {
 		if !color {
 			return s
@@ -204,12 +216,7 @@ func helpFlag(w io.Writer, name, desc string) {
 }
 
 func printBanner(w io.Writer, color bool) {
-	banners := []string{
-		"   ( •_•)   database_scan\n   / >*    sensitive data mapper\n          github.com/RuoJi6/database_scan",
-		"   ╭( ･ㅂ･)و ̑̑  database_scan\n   ├─ table-aware sensitive scanner\n   ╰─ github.com/RuoJi6/database_scan",
-		"   (ง •̀_•́)ง  database_scan\n   [sql] -> [fields] -> [full-row proof]\n   https://github.com/RuoJi6/database_scan",
-		"   (づ｡◕‿‿◕｡)づ  database_scan\n   dumping rows, not dignity\n   https://github.com/RuoJi6/database_scan",
-	}
+	banners := bannerTemplates()
 	palette := []string{"1;36", "1;35", "1;32", "1;34"}
 	idx := rand.Intn(len(banners))
 	body := banners[idx]
@@ -218,6 +225,23 @@ func printBanner(w io.Writer, color bool) {
 	}
 	fmt.Fprintln(w, body)
 	fmt.Fprintln(w)
+}
+
+func bannerTemplates() []string {
+	return []string{
+		"   ( •_•)   database_scan\n   / >*    sensitive data mapper\n          github.com/RuoJi6/database_scan",
+		"   ╭( ･ㅂ･)و ̑̑  database_scan\n   ├─ table-aware sensitive scanner\n   ╰─ github.com/RuoJi6/database_scan",
+		"   (ง •̀_•́)ง  database_scan\n   [sql] -> [fields] -> [full-row proof]\n   https://github.com/RuoJi6/database_scan",
+		"   (づ｡◕‿‿◕｡)づ  database_scan\n   dumping rows, not dignity\n   https://github.com/RuoJi6/database_scan",
+		"   (⌐■_■)  database_scan\n   ===[ schema recon :: sensitive proof ]===\n   github.com/RuoJi6/database_scan",
+		"   (｀･ω･´)ゞ  database_scan\n   tables locked, samples loaded\n   github.com/RuoJi6/database_scan",
+		"   (｡•̀ᴗ-)✧  database_scan\n   field names lie; rows confess\n   github.com/RuoJi6/database_scan",
+		"   (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧  database_scan\n   xlsx summaries with colored risk\n   github.com/RuoJi6/database_scan",
+		"      _      _        _\n   __| | ___| |_ __ _| |__   __ _ ___  ___\n  / _` |/ _ \\ __/ _` | '_ \\ / _` / __|/ _ \\\n | (_| |  __/ || (_| | |_) | (_| \\__ \\  __/\n  \\__,_|\\___|\\__\\__,_|_.__/ \\__,_|___/\\___|\n        database_scan  ::  github.com/RuoJi6/database_scan",
+		"   =[ database_scan ]====================\n   + target: tables, columns, rows\n   + output: terminal, xlsx, proof\n   + repo  : github.com/RuoJi6/database_scan",
+		"   .: database_scan :.\n   [ enumerate ] -> [ classify ] -> [ sample rows ]\n   repo: github.com/RuoJi6/database_scan",
+		"   ┌─[ database_scan ]─[ sensitive mapper ]\n   ├─ risk levels: high / medium / low\n   └─ github.com/RuoJi6/database_scan",
+	}
 }
 
 func normalizeTarget(cfg *Config) error {
