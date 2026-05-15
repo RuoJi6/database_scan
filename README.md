@@ -2,7 +2,7 @@
 
 [![build](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml/badge.svg)](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml)
 
-`database_scan` 是一个 Go 编写的数据库敏感信息检索 CLI 工具，用于检查开发数据库中是否存在手机号、身份证、地址、账号、密码、邮箱、银行卡、token/secret 等敏感信息。默认终端表格输出，便于截图提交给开发部门。
+`database_scan` 是一个 Go 编写的数据库敏感信息检索 CLI 工具，用于检查开发数据库中是否存在手机号、身份证、地址、账号、密码、邮箱、银行卡、token/secret 等敏感信息。默认终端表格输出。
 
 ## 支持能力
 
@@ -123,6 +123,16 @@ Oracle 的 `--database` 表示 service name：
 - HTTP CONNECT 代理支持用户名密码：`--proxy http://user:pass@host:port`。
 - 代理账号或密码里如果包含 `@`、`:`、`/`、`?`、`#` 等 URL 特殊字符，需要 URL 编码，例如 `@` 写成 `%40`，`:` 写成 `%3A`。
 - 为避免密码进入 shell 历史记录，生产或共享终端环境中建议省略数据库 `--password`，改用隐藏交互输入。
+
+## 效果预览
+
+![终端扫描连接信息](assets/image-20260515125337865.png)
+
+![敏感字段与样例值](assets/image-20260515125452703.png)
+
+![并发扫描进度](assets/image-20260515125511339.png)
+
+![Excel 输出结果](assets/image-20260515125542123.png)
 
 ## 注意
 
