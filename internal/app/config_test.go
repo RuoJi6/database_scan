@@ -1,13 +1,77 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
+	"strings"
 	"testing"
 
 	"database_scan/internal/db"
 	"database_scan/internal/detector"
 )
+
+func TestParseArgsHelp(t *testing.T) {
+	_, err := parseArgs([]string{"-h"})
+	if !errors.Is(err, errHelp) {
+		t.Fatalf("expected help error, got %v", err)
+	}
+}
+
+func TestPrintHelpIncludesProjectAndColor(t *testing.T) {
+	var buf bytes.Buffer
+	printHelp(&buf, true)
+	body := buf.String()
+	if !strings.Contains(body, projectName) || !strings.Contains(body, projectURL) {
+		t.Fatalf("help missing project metadata: %s", body)
+	}
+	if !strings.Contains(body, "\x1b[") {
+		t.Fatalf("expected colored help output: %q", body)
+	}
+}
+
+func TestPrintHelpCanDisableColor(t *testing.T) {
+	var buf bytes.Buffer
+	printHelp(&buf, false)
+	body := buf.String()
+	if strings.Contains(body, "\x1b[") {
+		t.Fatalf("expected plain help output: %q", body)
+	}
+	if !strings.Contains(body, "--no-color") {
+		t.Fatalf("help missing --no-color option: %s", body)
+	}
+	if !strings.Contains(body, "--no-banner") {
+		t.Fatalf("help missing --no-banner option: %s", body)
+	}
+	if !strings.Contains(body, "--no-progress") {
+		t.Fatalf("help missing --no-progress option: %s", body)
+	}
+}
+
+func TestHelpColorEnabledHonorsNoColorFlag(t *testing.T) {
+	if helpColorEnabled([]string{"--no-color", "-h"}) {
+		t.Fatal("expected --no-color to disable help colors")
+	}
+}
+
+func TestPrintBanner(t *testing.T) {
+	var colored bytes.Buffer
+	printBanner(&colored, true)
+	coloredBody := colored.String()
+	if !strings.Contains(coloredBody, projectName) || !strings.Contains(coloredBody, "github.com/RuoJi6/database_scan") {
+		t.Fatalf("banner missing project metadata: %s", coloredBody)
+	}
+	if !strings.Contains(coloredBody, "\x1b[") {
+		t.Fatalf("expected colored banner output: %q", coloredBody)
+	}
+
+	var plain bytes.Buffer
+	printBanner(&plain, false)
+	if strings.Contains(plain.String(), "\x1b[") {
+		t.Fatalf("expected plain banner output: %q", plain.String())
+	}
+}
 
 func TestParseArgsAcceptsHostPortInHostFlag(t *testing.T) {
 	cfg, err := parseArgs([]string{
@@ -118,6 +182,22 @@ func TestParseArgsNoColor(t *testing.T) {
 	}
 	if !cfg.NoColor {
 		t.Fatal("expected --no-color to be enabled")
+	}
+}
+
+func TestParseArgsNoProgress(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mssql",
+		"--host", "192.0.2.10",
+		"--user", "sa",
+		"--password", "secret",
+		"--no-progress",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if !cfg.NoProgress {
+		t.Fatal("expected --no-progress to be enabled")
 	}
 }
 

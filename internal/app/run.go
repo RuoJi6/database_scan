@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +24,13 @@ import (
 func Run(ctx context.Context, args []string) error {
 	cfg, err := parseArgs(args)
 	if err != nil {
+		if isHelp(err) {
+			return nil
+		}
 		return err
+	}
+	if !cfg.NoBanner {
+		printBanner(os.Stdout, !cfg.NoColor && helpColorEnabled(nil))
 	}
 	adapter, err := db.NewAdapter(cfg.Type)
 	if err != nil {
@@ -117,9 +124,13 @@ func Run(ctx context.Context, args []string) error {
 	}()
 	var partialMu sync.Mutex
 	partial := scanner.Result{}
+	var progressWriter = os.Stderr
+	if cfg.NoProgress {
+		progressWriter = nil
+	}
 	result := scanner.Scan(scanCtx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
-		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: os.Stderr,
+		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: progressWriter,
 		OnTable: func(table scanner.TableResult) {
 			partialMu.Lock()
 			partial.Tables = append(partial.Tables, table)
@@ -138,7 +149,11 @@ func Run(ctx context.Context, args []string) error {
 		if err := output.WriteXLSX(cfg.Output, result); err != nil {
 			return fmt.Errorf("write xlsx output: %w", err)
 		}
-		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", cfg.Output)
+		outputPath, err := filepath.Abs(cfg.Output)
+		if err != nil {
+			outputPath = cfg.Output
+		}
+		fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
 	}
 	return nil
 }

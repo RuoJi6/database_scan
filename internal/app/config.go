@@ -1,8 +1,11 @@
 package app
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -14,6 +17,13 @@ import (
 
 	"golang.org/x/term"
 )
+
+const (
+	projectName = "database_scan"
+	projectURL  = "https://github.com/RuoJi6/database_scan"
+)
+
+var errHelp = errors.New("help requested")
 
 type Config struct {
 	Type          string
@@ -32,6 +42,8 @@ type Config struct {
 	IncludeSystem bool
 	Mask          bool
 	NoColor       bool
+	NoBanner      bool
+	NoProgress    bool
 	Workers       int
 	Timeout       time.Duration
 }
@@ -40,6 +52,7 @@ func parseArgs(args []string) (Config, error) {
 	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 1, Timeout: 15 * time.Second}
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres")
 	fs.StringVar(&cfg.Host, "host", "", "database host")
 	fs.IntVar(&cfg.Port, "port", 0, "database port")
@@ -57,9 +70,17 @@ func parseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
+	fs.BoolVar(&cfg.NoBanner, "no-banner", false, "disable startup banner")
+	fs.BoolVar(&cfg.NoProgress, "no-progress", false, "disable scan progress output")
 	fs.IntVar(&cfg.Workers, "workers", 1, "scan workers; 1 disables parallel table scanning")
 	fs.DurationVar(&cfg.Timeout, "timeout", 15*time.Second, "single query timeout")
+	fs.Usage = func() {
+		printHelp(os.Stdout, helpColorEnabled(args))
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return cfg, errHelp
+		}
 		return cfg, err
 	}
 	if cfg.Host == "" {
@@ -113,6 +134,90 @@ func parseArgs(args []string) (Config, error) {
 		return cfg, fmt.Errorf("unsupported --mode %q", cfg.Mode)
 	}
 	return cfg, nil
+}
+
+func isHelp(err error) bool {
+	return errors.Is(err, errHelp)
+}
+
+func helpColorEnabled(args []string) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "--no-color" || arg == "-no-color" {
+			return false
+		}
+	}
+	return true
+}
+
+func printHelp(w io.Writer, color bool) {
+	c := func(code, s string) string {
+		if !color {
+			return s
+		}
+		return "\x1b[" + code + "m" + s + "\x1b[0m"
+	}
+	title := c("1;36", projectName)
+	url := c("4;34", projectURL)
+	section := func(s string) string { return c("1;33", s) }
+	flagName := func(s string) string { return c("36", s) }
+	fmt.Fprintf(w, "%s\n", title)
+	fmt.Fprintln(w, c("90", "数据库敏感信息扫描与整行样例导出工具"))
+	fmt.Fprintf(w, "项目地址: %s\n\n", url)
+	fmt.Fprintf(w, "%s\n", section("Usage"))
+	fmt.Fprintf(w, "  %s --type <mysql|mssql|postgres|oracle|oceanbase|opengauss|kingbase> <host:port> --user <user> [options]\n\n", projectName)
+	fmt.Fprintf(w, "%s\n", section("Examples"))
+	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb\n", projectName)
+	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb --table dbo.Users --output result.xlsx\n", projectName)
+	fmt.Fprintf(w, "  %s --type postgres --host 198.51.100.10 --user dev --password pass --level high --workers 4\n\n", projectName)
+	fmt.Fprintf(w, "%s\n", section("Target"))
+	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、oracle、oceanbase、opengauss、kingbase")
+	helpFlag(w, flagName("--host"), "目标地址；也支持把 host:port 作为位置参数")
+	helpFlag(w, flagName("--port"), "目标端口，不填时使用数据库默认端口")
+	helpFlag(w, flagName("--proxy"), "代理地址：socks5://... 或 http://...")
+	fmt.Fprintf(w, "\n%s\n", section("Auth"))
+	helpFlag(w, flagName("--user"), "数据库用户名")
+	helpFlag(w, flagName("--password"), "数据库密码；不填时隐藏交互输入")
+	fmt.Fprintf(w, "\n%s\n", section("Scan"))
+	helpFlag(w, flagName("--database"), "指定单个数据库；不指定时扫描全部可访问数据库")
+	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users 或 dbo.Users")
+	helpFlag(w, flagName("--mode"), "扫描模式：field-content、field-name、content、all；默认 field-content")
+	helpFlag(w, flagName("--level"), "敏感级别：all、high、medium、low；默认 all")
+	helpFlag(w, flagName("--limit"), "每张命中表最多展示整行样例数量；默认 15")
+	helpFlag(w, flagName("--workers"), "按表并发扫描数量；默认 1 表示不启用并发")
+	helpFlag(w, flagName("--timeout"), "单查询超时；默认 15s")
+	helpFlag(w, flagName("--include-system"), "包含系统库")
+	fmt.Fprintf(w, "\n%s\n", section("Output"))
+	helpFlag(w, flagName("--output"), "写入 Excel 文件；第一个 Sheet 为敏感信息汇总")
+	helpFlag(w, flagName("--mask"), "样例值脱敏显示")
+	helpFlag(w, flagName("--no-color"), "关闭终端颜色；也可设置 NO_COLOR=1")
+	helpFlag(w, flagName("--no-banner"), "关闭启动随机颜文字 banner")
+	helpFlag(w, flagName("--no-progress"), "关闭运行状态/扫描进度输出")
+	helpFlag(w, flagName("--sql"), "执行自定义 SQL")
+	helpFlag(w, flagName("-h, --help"), "显示此帮助")
+}
+
+func helpFlag(w io.Writer, name, desc string) {
+	fmt.Fprintf(w, "  %-18s %s\n", name, desc)
+}
+
+func printBanner(w io.Writer, color bool) {
+	banners := []string{
+		"   ( •_•)   database_scan\n   / >*    sensitive data mapper\n          github.com/RuoJi6/database_scan",
+		"   ╭( ･ㅂ･)و ̑̑  database_scan\n   ├─ table-aware sensitive scanner\n   ╰─ github.com/RuoJi6/database_scan",
+		"   (ง •̀_•́)ง  database_scan\n   [sql] -> [fields] -> [full-row proof]\n   https://github.com/RuoJi6/database_scan",
+		"   (づ｡◕‿‿◕｡)づ  database_scan\n   dumping rows, not dignity\n   https://github.com/RuoJi6/database_scan",
+	}
+	palette := []string{"1;36", "1;35", "1;32", "1;34"}
+	idx := rand.Intn(len(banners))
+	body := banners[idx]
+	if color {
+		body = "\x1b[" + palette[idx%len(palette)] + "m" + body + "\x1b[0m"
+	}
+	fmt.Fprintln(w, body)
+	fmt.Fprintln(w)
 }
 
 func normalizeTarget(cfg *Config) error {
