@@ -254,7 +254,9 @@ func stylesXML() string {
 func worksheetXML(rows [][]xlsxCell) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
-	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	b.WriteString(colsXML(columnWidths(rows)))
+	b.WriteString(`<sheetData>`)
 	for r, row := range rows {
 		b.WriteString(fmt.Sprintf(`<row r="%d">`, r+1))
 		for c, cell := range row {
@@ -268,6 +270,50 @@ func worksheetXML(rows [][]xlsxCell) string {
 		b.WriteString(`</row>`)
 	}
 	b.WriteString(`</sheetData></worksheet>`)
+	return b.String()
+}
+
+func columnWidths(rows [][]xlsxCell) []float64 {
+	maxByColumn := map[int]int{}
+	maxColumn := -1
+	for _, row := range rows {
+		for col, cell := range row {
+			if col > maxColumn {
+				maxColumn = col
+			}
+			width := displayWidth(cell.Value)
+			if width > maxByColumn[col] {
+				maxByColumn[col] = width
+			}
+		}
+	}
+	if maxColumn < 0 {
+		return nil
+	}
+	widths := make([]float64, maxColumn+1)
+	for col := range widths {
+		width := float64(maxByColumn[col]) + 2
+		if width < 8 {
+			width = 8
+		}
+		if width > 60 {
+			width = 60
+		}
+		widths[col] = width
+	}
+	return widths
+}
+
+func colsXML(widths []float64) string {
+	if len(widths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<cols>`)
+	for i, width := range widths {
+		b.WriteString(fmt.Sprintf(`<col min="%d" max="%d" width="%.1f" customWidth="1"/>`, i+1, i+1, width))
+	}
+	b.WriteString(`</cols>`)
 	return b.String()
 }
 

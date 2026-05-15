@@ -56,6 +56,9 @@ func TestWriteXLSX(t *testing.T) {
 			if !strings.Contains(body, "敏感信息汇总") || !strings.Contains(body, "[数据库]") || !strings.Contains(body, "dbo.Users") || !strings.Contains(body, "（存在行数：2）") {
 				t.Fatalf("summary sheet missing expected content: %s", body)
 			}
+			if !strings.Contains(body, `<cols>`) || !strings.Contains(body, `customWidth="1"`) {
+				t.Fatalf("summary sheet missing custom column widths: %s", body)
+			}
 			seenStyle = strings.Contains(body, `s="1"`) && strings.Contains(body, `s="3"`)
 		}
 		if f.Name == "xl/worksheets/sheet2.xml" {
@@ -67,6 +70,32 @@ func TestWriteXLSX(t *testing.T) {
 	}
 	if !seenStyle {
 		t.Fatal("expected sensitive cells to include style ids")
+	}
+}
+
+func TestColumnWidths(t *testing.T) {
+	rows := [][]xlsxCell{
+		cells("短", "ascii"),
+		cells("中文列宽", strings.Repeat("x", 100)),
+	}
+	widths := columnWidths(rows)
+	if len(widths) != 2 {
+		t.Fatalf("unexpected widths: %#v", widths)
+	}
+	if widths[0] < 10 {
+		t.Fatalf("expected Chinese display width to be considered, got %.1f", widths[0])
+	}
+	if widths[1] != 60 {
+		t.Fatalf("expected long text width to be capped at 60, got %.1f", widths[1])
+	}
+}
+
+func TestDisplayWidth(t *testing.T) {
+	if got := displayWidth("abc"); got != 3 {
+		t.Fatalf("unexpected ascii width: %d", got)
+	}
+	if got := displayWidth("中文"); got != 4 {
+		t.Fatalf("unexpected Chinese width: %d", got)
 	}
 }
 
