@@ -40,6 +40,7 @@ type Config struct {
 	SQL           string
 	Output        string
 	Fscan         string
+	FscanText     string
 	SplitOutput   bool
 	IncludeSystem bool
 	Mask          bool
@@ -60,8 +61,8 @@ func parseArgs(args []string) (Config, error) {
 	fs.IntVar(&cfg.Port, "port", 0, "database port")
 	fs.StringVar(&cfg.User, "user", "", "database username")
 	fs.StringVar(&cfg.Password, "password", "", "database password")
-	fs.StringVar(&cfg.Database, "database", "", "initial database")
-	fs.StringVar(&cfg.Table, "table", "", "scan only this table; supports table or schema.table")
+	fs.StringVar(&cfg.Database, "database", "", "initial database; comma-separated values are supported")
+	fs.StringVar(&cfg.Table, "table", "", "scan only these tables; supports table, schema.table, and comma-separated values")
 	fs.StringVar(&cfg.Proxy, "proxy", "", "proxy url: socks5://user:pass@host:port or http://user:pass@host:port")
 	fs.StringVar(&cfg.Mode, "mode", "field-content", "scan mode: field-content, field-name, content, all")
 	level := string(cfg.Level)
@@ -190,6 +191,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	fmt.Fprintf(w, "%s\n", section("Examples"))
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb\n", projectName)
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb --table dbo.Users --output result.xlsx\n", projectName)
+	fmt.Fprintf(w, "  %s --type mysql 192.0.2.20:3306 --user root --password pass --database app,audit --table users,orders\n", projectName)
 	fmt.Fprintf(w, "  %s --type postgres --host 198.51.100.10 --user dev --password pass --level high --workers 4\n\n", projectName)
 	fmt.Fprintf(w, "%s\n", section("Target"))
 	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、redis、oracle、oceanbase、opengauss、kingbase")
@@ -200,8 +202,8 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	helpFlag(w, flagName("--user"), "数据库用户名")
 	helpFlag(w, flagName("--password"), "数据库密码；不填时隐藏交互输入")
 	fmt.Fprintf(w, "\n%s\n", section("Scan"))
-	helpFlag(w, flagName("--database"), "指定单个数据库；不指定时扫描全部可访问数据库")
-	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users 或 dbo.Users")
+	helpFlag(w, flagName("--database"), "指定数据库；多个用逗号分隔；不指定时扫描全部可访问数据库")
+	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users、dbo.Users，多个用逗号分隔")
 	helpFlag(w, flagName("--fscan"), "解析 fscan 扫描结果中的数据库凭据并批量接入扫描")
 	helpFlag(w, flagName("--mode"), "扫描模式：field-content、field-name、content、all；默认 field-content")
 	helpFlag(w, flagName("--level"), "敏感级别：all、high、medium、low；默认 all")

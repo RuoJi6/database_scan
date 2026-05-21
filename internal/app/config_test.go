@@ -387,6 +387,33 @@ func TestScanDatabasesUsesSpecifiedDatabaseOnly(t *testing.T) {
 	}
 }
 
+func TestScanDatabasesUsesCommaSeparatedDatabases(t *testing.T) {
+	got := scanDatabases(dbStub{family: "mysql"}, []string{"app", "audit"}, "app, audit,app")
+	want := []string{"app", "audit"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected length: %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected databases: %#v", got)
+		}
+	}
+}
+
+func TestConnectionDatabaseIsEmptyForMultipleDatabases(t *testing.T) {
+	got := connectionDatabase(dbStub{family: "mysql"}, "app, audit")
+	if got != "" {
+		t.Fatalf("expected empty initial database for multiple mysql databases, got %q", got)
+	}
+}
+
+func TestConnectionDatabaseKeepsSingleDatabase(t *testing.T) {
+	got := connectionDatabase(dbStub{family: "postgres"}, "app")
+	if got != "app" {
+		t.Fatalf("expected single initial database to be kept, got %q", got)
+	}
+}
+
 func TestScanDatabasesSortsAllWhenDatabaseIsNotSpecified(t *testing.T) {
 	got := scanDatabases(dbStub{family: "mysql"}, []string{"z", "a"}, "")
 	want := []string{"a", "z"}

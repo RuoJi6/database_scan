@@ -158,3 +158,53 @@ func TestFilterColumnsByTableMatchesTableAndSchemaTable(t *testing.T) {
 		t.Fatalf("unexpected schema.table match: %#v", bySchemaTable)
 	}
 }
+
+func TestFilterColumnsByTableMatchesCommaSeparatedTables(t *testing.T) {
+	columns := []db.Column{
+		{Database: "app", Schema: "dbo", Table: "Users", Name: "ID"},
+		{Database: "app", Schema: "dbo", Table: "Users", Name: "Password"},
+		{Database: "app", Schema: "audit", Table: "Log", Name: "UserName"},
+		{Database: "app", Schema: "crm", Table: "Orders", Name: "Phone"},
+	}
+
+	got := filterColumnsByTable(columns, "dbo.users, orders")
+	if len(got) != 3 || got[0].Name != "ID" || got[1].Name != "Password" || got[2].Name != "Phone" {
+		t.Fatalf("unexpected comma-separated table match: %#v", got)
+	}
+}
+
+func TestAddFindingTablesBuildsEvidenceTableForContentMode(t *testing.T) {
+	result := Result{
+		Summaries: []Summary{{
+			Database: "app",
+			Schema:   "public",
+			Table:    "orders",
+			Column:   "payload",
+			Kind:     detector.Email,
+			Level:    detector.LevelMedium,
+			Mode:     Content,
+			Total:    2,
+		}},
+		Samples: []Sample{{
+			Database: "app",
+			Schema:   "public",
+			Table:    "orders",
+			Column:   "payload",
+			Kind:     detector.Email,
+			Level:    detector.LevelMedium,
+			Mode:     Content,
+			Value:    "audit@example.internal",
+		}},
+	}
+	addFindingTables(&result, 15)
+	if len(result.Tables) != 1 {
+		t.Fatalf("expected synthetic table, got %#v", result.Tables)
+	}
+	table := result.Tables[0]
+	if table.Name != "orders" || len(table.Fields) != 1 || table.Fields[0].Name != "payload" {
+		t.Fatalf("unexpected synthetic table fields: %#v", table)
+	}
+	if len(table.Rows) != 1 || table.Rows[0].Values["样例值"] != "audit@example.internal" {
+		t.Fatalf("unexpected synthetic evidence rows: %#v", table.Rows)
+	}
+}

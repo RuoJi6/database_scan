@@ -81,3 +81,20 @@ func TestParseLineIgnoresNonDatabaseFindings(t *testing.T) {
 		t.Fatalf("unexpected parse result: %#v", got)
 	}
 }
+
+func TestParseTextDeduplicatesAndIgnoresNoise(t *testing.T) {
+	targets, err := ParseText(`[SUCCESS] MySQL 10.211.55.16:13306 root:scanpass
+[VULN] PostgreSQL 10.211.55.16:15432 audit:scanpass
+[SUCCESS] Redis 10.211.55.16:16379 scanpass
+[SUCCESS] MySQL 10.211.55.16:13306 root:scanpass
+[+] SSH 10.211.55.16:22 root:kaliadmin`)
+	if err != nil {
+		t.Fatalf("ParseText returned error: %v", err)
+	}
+	if len(targets) != 3 {
+		t.Fatalf("expected 3 unique database targets, got %#v", targets)
+	}
+	if targets[0].Type != "mysql" || targets[1].Type != "postgres" || targets[2].Type != "redis" {
+		t.Fatalf("unexpected target order: %#v", targets)
+	}
+}

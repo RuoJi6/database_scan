@@ -170,12 +170,23 @@ func Scan(ctx context.Context, base *sql.DB, adapter db.Adapter, databases []str
 			continue
 		}
 		progressf(opts.Progress, "数据库 %s: 发现 %d 个可扫描字段，%d 个字段名命中规则，开始扫描...\n", database, len(columns), matchingFieldCountByLevel(columns, opts.Level))
-		scanTables(ctx, queryDB, adapter, columns, opts, &result, &mu)
+		switch opts.Mode {
+		case FieldName, Content:
+			scanColumns(ctx, queryDB, adapter, columns, opts, &result, &mu)
+		case All:
+			scanTables(ctx, queryDB, adapter, columns, opts, &result, &mu)
+			scanColumns(ctx, queryDB, adapter, columns, opts, &result, &mu)
+		default:
+			scanTables(ctx, queryDB, adapter, columns, opts, &result, &mu)
+		}
 		progressf(opts.Progress, "数据库 %s: 扫描完成。\n", database)
 		stopCloseOnCancel()
 		if reconnect != nil {
 			_ = queryDB.Close()
 		}
+	}
+	if opts.Mode == FieldName || opts.Mode == Content || opts.Mode == All {
+		addFindingTables(&result, opts.Limit)
 	}
 	return result
 }
@@ -195,18 +206,30 @@ func matchingFieldCountByLevel(columns []db.Column, level detector.Level) int {
 }
 
 func filterColumnsByTable(columns []db.Column, wanted string) []db.Column {
-	wanted = strings.TrimSpace(wanted)
-	if wanted == "" {
+	wantedTables := splitTableFilter(wanted)
+	if len(wantedTables) == 0 {
 		return columns
 	}
-	wanted = strings.ToLower(wanted)
 	var out []db.Column
 	for _, col := range columns {
 		table := strings.ToLower(col.Table)
 		schemaTable := strings.ToLower(col.Schema + "." + col.Table)
-		if wanted == table || wanted == schemaTable {
+		if wantedTables[table] || wantedTables[schemaTable] {
 			out = append(out, col)
 		}
+	}
+	return out
+}
+
+func splitTableFilter(wanted string) map[string]bool {
+	parts := strings.Split(wanted, ",")
+	out := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		item := strings.ToLower(strings.TrimSpace(part))
+		if item == "" {
+			continue
+		}
+		out[item] = true
 	}
 	return out
 }
@@ -247,11 +270,126 @@ func scanColumns(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns
 			}
 		}()
 	}
+sendJobs:
 	for _, col := range columns {
-		jobs <- col
+		select {
+		case jobs <- col:
+		case <-ctx.Done():
+			break sendJobs
+		}
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+func addFindingTables(result *Result, limit int) {
+	groups := FindingsByDatabase(*result)
+	index := map[string]int{}
+	for i, table := range result.Tables {
+		index[tableKey(table.Database, table.Schema, table.Name)] = i
+	}
+	for _, database := range groups {
+		for _, table := range database.Tables {
+			key := tableKey(database.Name, table.Schema, table.Name)
+			pos, ok := index[key]
+			if !ok {
+				next := findingTable(database.Name, table, limit)
+				if len(next.Fields) == 0 {
+					continue
+				}
+				result.Tables = append(result.Tables, next)
+				index[key] = len(result.Tables) - 1
+				continue
+			}
+			mergeFindingFields(&result.Tables[pos], table.Findings, false)
+		}
+	}
+	sort.SliceStable(result.Tables, func(i, j int) bool {
+		a := result.Tables[i]
+		b := result.Tables[j]
+		return tableKey(a.Database, a.Schema, a.Name) < tableKey(b.Database, b.Schema, b.Name)
+	})
+}
+
+func findingTable(database string, table TableFindings, limit int) TableResult {
+	out := TableResult{
+		Database: database,
+		Schema:   table.Schema,
+		Name:     table.Name,
+		Columns:  []string{"字段名", "命中模式", "疑似类型", "样例值"},
+	}
+	mergeFindingFields(&out, table.Findings, true)
+	for _, finding := range table.Findings {
+		for _, value := range limitStrings(finding.Samples, limit) {
+			out.Rows = append(out.Rows, RowSample{Values: map[string]string{
+				"字段名":  finding.Summary.Column,
+				"命中模式": ModeLabel(finding.Summary.Mode),
+				"疑似类型": string(finding.Summary.Kind),
+				"样例值":  value,
+			}})
+		}
+		if len(finding.Samples) == 0 {
+			out.Rows = append(out.Rows, RowSample{Values: map[string]string{
+				"字段名":  finding.Summary.Column,
+				"命中模式": ModeLabel(finding.Summary.Mode),
+				"疑似类型": string(finding.Summary.Kind),
+				"样例值":  "",
+			}})
+		}
+	}
+	return out
+}
+
+func mergeFindingFields(table *TableResult, findings []Finding, updateTableTotal bool) {
+	fieldByName := map[string]int{}
+	for i, field := range table.Fields {
+		fieldByName[field.Name] = i
+	}
+	for _, finding := range findings {
+		summary := finding.Summary
+		pos, ok := fieldByName[summary.Column]
+		if !ok {
+			table.Fields = append(table.Fields, FieldResult{
+				Name:  summary.Column,
+				Kinds: []detector.Kind{summary.Kind},
+				Level: summaryLevel(summary),
+				Mode:  summary.Mode,
+				Total: summary.Total,
+			})
+			fieldByName[summary.Column] = len(table.Fields) - 1
+			if updateTableTotal && summary.Total > table.Total {
+				table.Total = summary.Total
+			}
+			continue
+		}
+		field := &table.Fields[pos]
+		if !kindExists(field.Kinds, summary.Kind) {
+			field.Kinds = append(field.Kinds, summary.Kind)
+		}
+		field.Level = highestLevel(field.Kinds)
+		if field.Total < summary.Total {
+			field.Total = summary.Total
+		}
+		if field.Mode != summary.Mode {
+			field.Mode = All
+		}
+		if updateTableTotal && summary.Total > table.Total {
+			table.Total = summary.Total
+		}
+	}
+}
+
+func kindExists(kinds []detector.Kind, kind detector.Kind) bool {
+	for _, existing := range kinds {
+		if existing == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func tableKey(database, schema, table string) string {
+	return database + "\x00" + schema + "\x00" + table
 }
 
 func scanTables(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, columns []db.Column, opts Options, result *Result, mu *sync.Mutex) {
@@ -532,6 +670,10 @@ func querySampleRows(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, sel
 		return nil, err
 	}
 	defer rows.Close()
+	sensitiveByColumn := map[string][]detector.Kind{}
+	for _, col := range conditionCols {
+		sensitiveByColumn[col.Name] = detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
+	}
 	names, err := rows.Columns()
 	if err != nil {
 		return nil, err
@@ -549,7 +691,13 @@ func querySampleRows(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, sel
 		sample := RowSample{Values: map[string]string{}}
 		for i, name := range names {
 			if values[i].Valid {
-				sample.Values[name] = values[i].String
+				value := values[i].String
+				if opts.Mask {
+					if kinds := sensitiveByColumn[name]; len(kinds) > 0 {
+						value = detector.Mask(kinds[0], value)
+					}
+				}
+				sample.Values[name] = value
 			}
 		}
 		samples = append(samples, sample)

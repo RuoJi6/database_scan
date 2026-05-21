@@ -3,6 +3,7 @@ package fscan
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -25,10 +26,17 @@ func ParseFile(path string) ([]Target, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return Parse(file)
+}
 
+func ParseText(text string) ([]Target, error) {
+	return Parse(strings.NewReader(text))
+}
+
+func Parse(r io.Reader) ([]Target, error) {
 	var targets []Target
 	seen := map[string]bool{}
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	lineNo := 0
 	for scanner.Scan() {

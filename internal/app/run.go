@@ -69,7 +69,7 @@ func runSingle(ctx context.Context, cfg Config) error {
 	}
 	dbCfg := db.Config{
 		Type: cfg.Type, Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password,
-		Database: cfg.Database, Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
+		Database: connectionDatabase(adapter, cfg.Database), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
 	}
 	conn, err := adapter.Open(ctx, dbCfg, dialer)
 	if err != nil {
@@ -331,7 +331,7 @@ func scanTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
 	}
 	dbCfg := db.Config{
 		Type: cfg.Type, Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password,
-		Database: cfg.Database, Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
+		Database: connectionDatabase(adapter, cfg.Database), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
 	}
 	conn, err := adapter.Open(ctx, dbCfg, dialer)
 	if err != nil {
@@ -407,16 +407,43 @@ func configureConnectionPool(conn *sql.DB, workers int) {
 }
 
 func scanDatabases(adapter db.Adapter, available []string, wanted string) []string {
+	wantedDatabases := splitCommaList(wanted)
+	if len(wantedDatabases) > 0 && adapter.Family() != "oracle" {
+		return wantedDatabases
+	}
 	if adapter.Family() == "oracle" {
 		out := append([]string(nil), available...)
 		sort.Strings(out)
 		return out
 	}
-	if strings.TrimSpace(wanted) != "" {
-		return []string{wanted}
-	}
 	out := append([]string(nil), available...)
 	sort.Strings(out)
+	return out
+}
+
+func connectionDatabase(adapter db.Adapter, wanted string) string {
+	if adapter.Family() != "oracle" && len(splitCommaList(wanted)) > 1 {
+		return ""
+	}
+	return strings.TrimSpace(wanted)
+}
+
+func splitCommaList(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
 	return out
 }
 
@@ -530,48 +557,16 @@ func blank(s string) string {
 
 func runCustomSQL(ctx context.Context, conn *sql.DB, cfg Config) error {
 	output.Section(os.Stdout, "自定义SQL")
-	queryCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-	rows, err := conn.QueryContext(queryCtx, cfg.SQL)
-	if err == nil {
-		defer rows.Close()
-		cols, err := rows.Columns()
-		if err != nil {
-			return err
-		}
-		var tableRows [][]string
-		total := 0
-		for rows.Next() {
-			total++
-			values := make([]any, len(cols))
-			ptrs := make([]any, len(cols))
-			for i := range values {
-				ptrs[i] = &values[i]
-			}
-			if err := rows.Scan(ptrs...); err != nil {
-				return err
-			}
-			if len(tableRows) < cfg.Limit {
-				row := make([]string, len(cols))
-				for i, v := range values {
-					row[i] = stringify(v)
-				}
-				tableRows = append(tableRows, row)
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		output.Table(os.Stdout, cols, tableRows)
-		fmt.Fprintf(os.Stdout, "总返回行数: %d，已显示: %d\n", total, len(tableRows))
-		return nil
-	}
-	result, execErr := conn.ExecContext(queryCtx, cfg.SQL)
-	if execErr != nil {
+	result, err := executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout)
+	if err != nil {
 		return err
 	}
-	affected, _ := result.RowsAffected()
-	fmt.Fprintf(os.Stdout, "SQL执行完成，影响行数: %d\n", affected)
+	if result.IsQuery {
+		output.Table(os.Stdout, result.Columns, result.Rows)
+		fmt.Fprintf(os.Stdout, "总返回行数: %d，已显示: %d\n", result.Total, result.Shown)
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "SQL执行完成，影响行数: %d\n", result.Affected)
 	return nil
 }
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "database_scan_gui",
+  "outputfilename": "gui",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "ji ruo",
+    "email": "79234113+RuoJi6@users.noreply.github.com"
+  }
+}
