@@ -297,6 +297,21 @@ func TestParseArgsAcceptsRedisWithoutUserOrPassword(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsExplicitEmptyPassword(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mysql",
+		"--host", "192.0.2.10",
+		"--user", "root",
+		"--password", "",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Password != "" {
+		t.Fatalf("expected empty password to be preserved, got %q", cfg.Password)
+	}
+}
+
 func TestParseArgsAcceptsSplitOutputWithOutput(t *testing.T) {
 	cfg, err := parseArgs([]string{
 		"--fscan", "result.txt",

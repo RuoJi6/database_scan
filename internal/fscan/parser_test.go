@@ -39,6 +39,7 @@ func TestParseLineNewFormat(t *testing.T) {
 		{"[VULN] PostgreSQL 10.211.55.16:54320 appuser:ProdPass_2026!", "postgres", "10.211.55.16", 54320, "appuser", "ProdPass_2026!"},
 		{"MSSQL 10.211.55.16:14330 sa:ProdPass_2026!Strong", "mssql", "10.211.55.16", 14330, "sa", "ProdPass_2026!Strong"},
 		{"[SUCCESS] Redis 10.211.55.16:63790 ProdPass_2026!", "redis", "10.211.55.16", 63790, "", "ProdPass_2026!"},
+		{"mysql 127.0.0.1:3306 root:", "mysql", "127.0.0.1", 3306, "root", ""},
 	}
 	for _, tc := range cases {
 		got, ok := ParseLine(tc.line, 1)
@@ -48,6 +49,19 @@ func TestParseLineNewFormat(t *testing.T) {
 		if got.Type != tc.dbType || got.Host != tc.host || got.Port != tc.port || got.User != tc.user || got.Password != tc.pass {
 			t.Fatalf("unexpected parse result: %#v", got)
 		}
+	}
+}
+
+func TestParseTextAcceptsRedisWithoutAuth(t *testing.T) {
+	targets, err := ParseText("redis 127.0.0.1:6379")
+	if err != nil {
+		t.Fatalf("ParseText returned error: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one redis target, got %#v", targets)
+	}
+	if targets[0].Type != "redis" || targets[0].Host != "127.0.0.1" || targets[0].Port != 6379 || targets[0].User != "" || targets[0].Password != "" {
+		t.Fatalf("unexpected redis target: %#v", targets[0])
 	}
 }
 

@@ -598,7 +598,6 @@
     if (!target.Host?.trim()) return `第 ${rowNo} 个目标请填写 Host`;
     if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
     if (target.Type !== 'redis' && !target.User?.trim()) return `第 ${rowNo} 个目标请填写账号`;
-    if (target.Type === 'redis' && !target.Password?.trim()) return `第 ${rowNo} 个 Redis 目标请填写密码`;
     return '';
   }
 
@@ -612,10 +611,11 @@
     const host = target.Host.trim();
     const port = Number(target.Port);
     if (!host || !port) return '';
-    const credential = target.Type === 'redis' && !target.User.trim()
-      ? target.Password.trim()
-      : `${target.User.trim()}:${target.Password ?? ''}`;
-    return `${target.Type} ${host}:${port} ${credential}`;
+    if (target.Type === 'redis' && !target.User.trim()) {
+      const password = target.Password.trim();
+      return password ? `${target.Type} ${host}:${port} ${password}` : `${target.Type} ${host}:${port}`;
+    }
+    return `${target.Type} ${host}:${port} ${target.User.trim()}:${target.Password ?? ''}`;
   }
 
   function targetLabelForCurrentPage() {
@@ -924,6 +924,10 @@
         </div>
       </section>
 
+      {#if formError}
+        <div class="error-line top-error">{formError}</div>
+      {/if}
+
       {#if activePage !== 'fscan'}
         <section class="panel">
           <div class="panel-heading">
@@ -1145,9 +1149,6 @@
             {/if}
             <button on:click={stopScan} disabled={!isRunning}>停止</button>
           </div>
-          {#if formError}
-            <div class="error-line">{formError}</div>
-          {/if}
         </div>
       </section>
     </aside>

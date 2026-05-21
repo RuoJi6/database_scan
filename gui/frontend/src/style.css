@@ -446,6 +446,12 @@ textarea:focus {
   background: #251716;
 }
 
+.top-error {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
 .scan-meter {
   display: grid;
   gap: 8px;

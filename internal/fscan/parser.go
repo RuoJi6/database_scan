@@ -45,6 +45,10 @@ func Parse(r io.Reader) ([]Target, error) {
 		lineNo++
 		line := scanner.Text()
 		target, ok := ParseLine(line, lineNo)
+		if ok && hasPendingManual && pendingManual.Type == "redis" {
+			addTarget(&targets, seen, pendingManual)
+			hasPendingManual = false
+		}
 		if !ok && hasPendingManual {
 			target, ok = completeManualTarget(pendingManual, line)
 			if ok {
@@ -53,6 +57,9 @@ func Parse(r io.Reader) ([]Target, error) {
 		}
 		if !ok {
 			if target, ok = parseManualHeader(line, lineNo); ok {
+				if hasPendingManual && pendingManual.Type == "redis" {
+					addTarget(&targets, seen, pendingManual)
+				}
 				pendingManual = target
 				hasPendingManual = true
 			}
@@ -62,6 +69,9 @@ func Parse(r io.Reader) ([]Target, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	if hasPendingManual && pendingManual.Type == "redis" {
+		addTarget(&targets, seen, pendingManual)
 	}
 	return targets, nil
 }

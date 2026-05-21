@@ -90,6 +90,12 @@ func parseArgs(args []string) (Config, error) {
 		}
 		return cfg, err
 	}
+	passwordFlagSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "password" {
+			passwordFlagSet = true
+		}
+	})
 	if cfg.Host == "" {
 		if target != "" {
 			cfg.Host = target
@@ -117,7 +123,7 @@ func parseArgs(args []string) (Config, error) {
 		}
 		cfg.Port = adapter.DefaultPort()
 	}
-	if cfg.Fscan == "" && cfg.Password == "" && cfg.Type != "redis" {
+	if cfg.Fscan == "" && !passwordFlagSet && cfg.Type != "redis" {
 		fmt.Fprint(os.Stderr, "Password: ")
 		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
@@ -203,7 +209,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	helpFlag(w, flagName("--test-connection"), "只测试数据库连接；设置 --proxy 时同时验证代理链路")
 	fmt.Fprintf(w, "\n%s\n", section("Auth"))
 	helpFlag(w, flagName("--user"), "数据库用户名")
-	helpFlag(w, flagName("--password"), "数据库密码；不填时隐藏交互输入")
+	helpFlag(w, flagName("--password"), "数据库密码；允许为空；显式空密码可传 --password ''，不传时隐藏交互输入")
 	fmt.Fprintf(w, "\n%s\n", section("Scan"))
 	helpFlag(w, flagName("--database"), "指定数据库；多个用逗号分隔；不指定时扫描全部可访问数据库")
 	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users、dbo.Users，多个用逗号分隔")
