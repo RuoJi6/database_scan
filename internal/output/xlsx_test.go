@@ -277,3 +277,24 @@ func TestSheetNamesUseDatabaseWhenSchemaIsEmpty(t *testing.T) {
 		t.Fatalf("unexpected sheet names: %#v", names)
 	}
 }
+
+func TestUniqueSheetNameAvoidsTruncatedSuffixCollisions(t *testing.T) {
+	used := map[string]int{}
+	inputs := []string{
+		"10.211.55.16:13306/audit_lab_archive.customer_profile",
+		"10.211.55.16:13306/audit_lab_archive.payment_orders",
+		"10.211.55.16:13306/audit_lab_extra.customer_profile",
+		"10.211.55.16:13306/audit_lab_extra.payment_orders",
+	}
+	seen := map[string]bool{}
+	for _, input := range inputs {
+		name := uniqueSheetName(input, used)
+		if seen[name] {
+			t.Fatalf("duplicate final sheet name %q for input %q", name, input)
+		}
+		if len([]rune(name)) > 31 {
+			t.Fatalf("sheet name exceeds Excel limit: %q", name)
+		}
+		seen[name] = true
+	}
+}

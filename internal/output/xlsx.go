@@ -284,13 +284,18 @@ func styleForKinds(kinds []detector.Kind) int {
 
 func uniqueSheetName(name string, used map[string]int) string {
 	base := sanitizeSheetName(name)
-	count := used[base]
-	used[base] = count + 1
-	if count == 0 {
+	if used[base] == 0 {
+		used[base] = 1
 		return base
 	}
-	suffix := fmt.Sprintf(" %d", count+1)
-	return truncateRunes(base, 31-len(suffix)) + suffix
+	for index := 2; ; index++ {
+		suffix := fmt.Sprintf(" %d", index)
+		candidate := truncateRunes(base, 31-utf8.RuneCountInString(suffix)) + suffix
+		if used[candidate] == 0 {
+			used[candidate] = 1
+			return candidate
+		}
+	}
 }
 
 func sanitizeSheetName(name string) string {
