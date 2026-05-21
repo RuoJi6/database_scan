@@ -36,26 +36,43 @@ func ParseText(text string) ([]Target, error) {
 func Parse(r io.Reader) ([]Target, error) {
 	var targets []Target
 	seen := map[string]bool{}
+	var pendingManual Target
+	hasPendingManual := false
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		target, ok := ParseLine(scanner.Text(), lineNo)
+		line := scanner.Text()
+		target, ok := ParseLine(line, lineNo)
+		if !ok && hasPendingManual {
+			target, ok = completeManualTarget(pendingManual, line)
+			if ok {
+				hasPendingManual = false
+			}
+		}
 		if !ok {
+			if target, ok = parseManualHeader(line, lineNo); ok {
+				pendingManual = target
+				hasPendingManual = true
+			}
 			continue
 		}
-		key := target.Type + "\x00" + target.Host + "\x00" + strconv.Itoa(target.Port) + "\x00" + target.User + "\x00" + target.Password
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		targets = append(targets, target)
+		addTarget(&targets, seen, target)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return targets, nil
+}
+
+func addTarget(targets *[]Target, seen map[string]bool, target Target) {
+	key := target.Type + "\x00" + target.Host + "\x00" + strconv.Itoa(target.Port) + "\x00" + target.User + "\x00" + target.Password
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	*targets = append(*targets, target)
 }
 
 func ParseLine(line string, lineNo int) (Target, bool) {
@@ -143,6 +160,43 @@ func parseNewLine(line string, lineNo int) (Target, bool) {
 	return Target{}, false
 }
 
+func parseManualHeader(line string, lineNo int) (Target, bool) {
+	raw := strings.TrimSpace(stripANSI(line))
+	fields := strings.Fields(raw)
+	if len(fields) != 2 {
+		return Target{}, false
+	}
+	dbType, ok := normalizeType(fields[0])
+	if !ok {
+		return Target{}, false
+	}
+	host, port, ok := splitHostPort(fields[1])
+	if !ok {
+		return Target{}, false
+	}
+	return Target{Type: dbType, Host: host, Port: port, Line: lineNo, Raw: raw}, true
+}
+
+func completeManualTarget(target Target, line string) (Target, bool) {
+	raw := strings.TrimSpace(stripANSI(line))
+	fields := strings.Fields(raw)
+	if len(fields) != 1 {
+		return Target{}, false
+	}
+	user, pass, ok := splitCredential(fields[0])
+	if !ok && target.Type == "redis" {
+		user, pass, ok = "", fields[0], fields[0] != ""
+	}
+	if !ok {
+		return Target{}, false
+	}
+	user, pass = normalizeRedisCredential(target.Type, user, pass)
+	target.User = user
+	target.Password = pass
+	target.Raw = strings.TrimSpace(target.Raw + "\n" + raw)
+	return target, true
+}
+
 func splitOldTarget(s string) (string, int, string, bool) {
 	parts := strings.Split(s, ":")
 	if len(parts) < 3 {
@@ -198,11 +252,33 @@ func normalizeType(s string) (string, bool) {
 		return "mysql", true
 	case "mariadb":
 		return "mariadb", true
+	case "tidb":
+		return "tidb", true
+	case "oceanbase", "oceanbase-mysql":
+		return "oceanbase", true
+	case "polardb-mysql":
+		return "polardb-mysql", true
+	case "doris":
+		return "doris", true
+	case "starrocks":
+		return "starrocks", true
+	case "gbase-mysql":
+		return "gbase-mysql", true
 	case "postgres", "postgresql":
 		return "postgres", true
+	case "opengauss":
+		return "opengauss", true
+	case "gaussdb":
+		return "gaussdb", true
+	case "kingbase", "kingbasees":
+		return "kingbase", true
+	case "highgo":
+		return "highgo", true
+	case "polardb-postgres":
+		return "polardb-postgres", true
 	case "mssql", "sqlserver":
 		return "mssql", true
-	case "oracle":
+	case "oracle", "go-ora":
 		return "oracle", true
 	case "redis":
 		return "redis", true

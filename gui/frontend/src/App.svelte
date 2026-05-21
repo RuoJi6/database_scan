@@ -69,6 +69,15 @@
     FinishedAt: string;
   };
   type FscanPreview = { Total: number; Targets: Array<{ Type: string; Host: string; Port: number; User: string; Line: number; Raw: string; Password: boolean }> };
+  type ManualTarget = {
+    ID: number;
+    Type: string;
+    Host: string;
+    Port: number;
+    User: string;
+    Password: string;
+    ShowPassword: boolean;
+  };
 
   const fallbackDefaults: ScanRequest = {
     Type: 'mysql',
@@ -111,11 +120,19 @@
   let activePage: 'single' | 'fscan' | 'sql' = 'single';
   let request: ScanRequest = { ...fallbackDefaults };
   let state: ScanState = emptyState;
-  let dbTypes = ['mysql', 'mariadb', 'postgres', 'mssql', 'oracle', 'redis'];
+  let dbTypes = [
+    'mysql', 'mariadb', 'tidb', 'oceanbase', 'oceanbase-mysql', 'polardb-mysql', 'doris', 'starrocks', 'gbase-mysql',
+    'mssql', 'sqlserver',
+    'postgres', 'postgresql', 'opengauss', 'gaussdb', 'kingbase', 'kingbasees', 'highgo', 'polardb-postgres',
+    'oracle', 'go-ora',
+    'redis'
+  ];
   let selectedTableIndex = -1;
   let pollTimer: number | undefined;
   let formError = '';
   let fscanPreview: FscanPreview = { Total: 0, Targets: [] };
+  let manualTargetSeq = 1;
+  let manualTargets: ManualTarget[] = [];
   let sqlResult: SQLResult | undefined;
   let showPassword = false;
   let sampleValueQuery = '';
@@ -129,14 +146,29 @@
   const defaultPorts: Record<string, number> = {
     mysql: 3306,
     mariadb: 3306,
-    oceanbase: 2881,
+    tidb: 3306,
+    oceanbase: 3306,
+    'oceanbase-mysql': 3306,
+    'polardb-mysql': 3306,
+    doris: 3306,
+    starrocks: 3306,
+    'gbase-mysql': 3306,
     postgres: 5432,
+    postgresql: 5432,
     opengauss: 5432,
-    kingbase: 54321,
+    gaussdb: 5432,
+    kingbase: 5432,
+    kingbasees: 5432,
+    highgo: 5432,
+    'polardb-postgres': 5432,
     mssql: 1433,
+    sqlserver: 1433,
     oracle: 1521,
+    'go-ora': 1521,
     redis: 6379
   };
+
+  manualTargets = [createManualTarget()];
 
   $: tables = state.Result?.Tables ?? [];
   $: selectedTable = selectedTableIndex >= 0 ? tables[selectedTableIndex] : undefined;
@@ -149,6 +181,7 @@
   $: isRunning = state.Status === 'running';
   $: statusText = statusLabel(state.Status);
   $: risk = riskTotals(tables);
+  $: currentTargetLabel = targetLabelForCurrentPage();
 
   onMount(async () => {
     if (hasWailsRuntime()) {
@@ -278,8 +311,8 @@
   async function parseFscan() {
     formError = '';
     fscanPreview = { Total: 0, Targets: [] };
-    if (request.FscanText?.trim()) {
-      await parseFscanText();
+    if (hasManualTargetInput()) {
+      await parseManualTargets();
       return;
     }
     if (!request.Fscan) return;
@@ -300,23 +333,35 @@
     }
   }
 
-  async function parseFscanText() {
+  async function parseManualTargets() {
     formError = '';
     fscanPreview = { Total: 0, Targets: [] };
-    if (!request.FscanText?.trim()) return;
+    const validationError = validateManualTargets();
+    if (validationError) {
+      formError = validationError;
+      return;
+    }
+    const text = manualTargetsText();
+    request.FscanText = text;
+    request.Fscan = '';
+    if (!text) return;
     if (!hasWailsRuntime()) {
       fscanPreview = {
-        Total: 3,
-        Targets: [
-          { Type: 'mysql', Host: '10.211.55.16', Port: 13306, User: 'root', Line: 1, Raw: 'MySQL 10.211.55.16:13306 root:pass', Password: true },
-          { Type: 'postgres', Host: '10.211.55.16', Port: 15432, User: 'audit', Line: 2, Raw: 'PostgreSQL 10.211.55.16:15432 audit:pass', Password: true },
-          { Type: 'redis', Host: '10.211.55.16', Port: 16379, User: '', Line: 3, Raw: 'Redis 10.211.55.16:16379 pass', Password: true }
-        ]
+        Total: manualTargets.filter(manualTargetHasInput).length,
+        Targets: manualTargets.filter(manualTargetHasInput).map((target, index) => ({
+          Type: target.Type,
+          Host: target.Host,
+          Port: Number(target.Port),
+          User: target.Type === 'redis' ? '' : target.User,
+          Line: index + 1,
+          Raw: manualTargetLine(target),
+          Password: Boolean(target.Password)
+        }))
       };
       return;
     }
     try {
-      fscanPreview = await ParseFscanText(request.FscanText);
+      fscanPreview = await ParseFscanText(text);
     } catch (error) {
       formError = normalizeError(error);
     }
@@ -349,6 +394,8 @@
       next.User = '';
       next.Password = '';
       next.SQL = '';
+      next.FscanText = manualTargetsText();
+      if (next.FscanText) next.Fscan = '';
     } else {
       next.Fscan = '';
       next.FscanText = '';
@@ -360,6 +407,8 @@
 
   function validateRequest(next: ScanRequest, page: 'single' | 'fscan' | 'sql') {
     if (page === 'fscan') {
+      const manualError = validateManualTargets();
+      if (manualError) return manualError;
       if (!next.Fscan?.trim() && !next.FscanText?.trim()) return '请选择 fscan 结果文件或填写批量目标清单';
       if (next.SplitOutput && !next.Output?.trim()) return '按目标拆分 Excel 需要先填写输出文件路径';
       return '';
@@ -394,6 +443,97 @@
     const nextPort = defaultPorts[request.Type] ?? 0;
     request.Port = nextPort;
     if (request.Type === 'redis') request.User = '';
+  }
+
+  function createManualTarget(type = 'mysql'): ManualTarget {
+    const dbType = type || 'mysql';
+    return {
+      ID: manualTargetSeq++,
+      Type: dbType,
+      Host: '',
+      Port: defaultPorts[dbType] ?? 0,
+      User: dbType === 'redis' ? '' : '',
+      Password: '',
+      ShowPassword: false
+    };
+  }
+
+  function insertManualTarget(afterIndex: number) {
+    const baseType = manualTargets[afterIndex]?.Type || manualTargets[afterIndex - 1]?.Type || 'mysql';
+    const next = createManualTarget(baseType);
+    manualTargets = [...manualTargets.slice(0, afterIndex), next, ...manualTargets.slice(afterIndex)];
+  }
+
+  function removeManualTarget(index: number) {
+    if (manualTargets.length <= 1) {
+      manualTargets = [createManualTarget(manualTargets[0]?.Type || 'mysql')];
+      fscanPreview = { Total: 0, Targets: [] };
+      request.FscanText = '';
+      return;
+    }
+    manualTargets = manualTargets.filter((_, itemIndex) => itemIndex !== index);
+  }
+
+  function changeManualTargetType(index: number) {
+    const target = manualTargets[index];
+    if (!target) return;
+    target.Port = defaultPorts[target.Type] ?? target.Port;
+    if (target.Type === 'redis') target.User = '';
+    manualTargets = [...manualTargets];
+  }
+
+  function toggleManualTargetPassword(index: number) {
+    const target = manualTargets[index];
+    if (!target) return;
+    target.ShowPassword = !target.ShowPassword;
+    manualTargets = [...manualTargets];
+  }
+
+  function manualTargetHasInput(target: ManualTarget) {
+    return Boolean(target.Host?.trim() || target.User?.trim() || target.Password?.trim());
+  }
+
+  function hasManualTargetInput() {
+    return manualTargets.some((target) => target.Host?.trim() || target.User?.trim() || target.Password?.trim());
+  }
+
+  function validateManualTargets() {
+    const activeTargets = manualTargets.filter(manualTargetHasInput);
+    if (!activeTargets.length) return '';
+    for (const [index, target] of activeTargets.entries()) {
+      const rowNo = index + 1;
+      if (!target.Type?.trim()) return `第 ${rowNo} 个目标请选择数据库类型`;
+      if (!target.Host?.trim()) return `第 ${rowNo} 个目标请填写 Host`;
+      if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
+      if (target.Type !== 'redis' && !target.User?.trim()) return `第 ${rowNo} 个目标请填写账号`;
+      if (target.Type === 'redis' && !target.Password?.trim()) return `第 ${rowNo} 个 Redis 目标请填写密码`;
+    }
+    return '';
+  }
+
+  function manualTargetsText() {
+    const validationError = validateManualTargets();
+    if (validationError) return '';
+    return manualTargets.filter(manualTargetHasInput).map(manualTargetLine).filter(Boolean).join('\n');
+  }
+
+  function manualTargetLine(target: ManualTarget) {
+    const host = target.Host.trim();
+    const port = Number(target.Port);
+    if (!host || !port) return '';
+    const credential = target.Type === 'redis' && !target.User.trim()
+      ? target.Password.trim()
+      : `${target.User.trim()}:${target.Password ?? ''}`;
+    return `${target.Type} ${host}:${port} ${credential}`;
+  }
+
+  function targetLabelForCurrentPage() {
+    if (state.TargetLabel) return state.TargetLabel;
+    if (activePage === 'fscan') {
+      if (hasManualTargetInput()) return '手工多目标';
+      return request.Fscan || '未设置';
+    }
+    return request.Host || '未设置';
   }
 
   function sampleGroupsFor(items: TableResult[]): SampleGroup[] {
@@ -549,25 +689,99 @@
         Errors: status === 'stopped' ? ['用户停止扫描，保留已完成表结果'] : [],
         Tables: [
           {
-            Database: 'crm_prod',
-            Schema: 'sales',
-            Name: 'customer_profile',
-            Total: 185432,
-            Columns: ['customer_id', 'real_name', 'id_card_no', 'mobile_phone', 'home_address'],
+            Database: 'audit_lab',
+            Schema: '',
+            Name: 'access_tokens',
+            Total: 2,
+            Columns: ['id', 'service_name', 'secret_key', 'refresh_token', 'owner_email'],
             Fields: [
-              { Name: 'id_card_no', Kinds: ['身份证'], Level: 'high', Mode: 'field-content', Total: 93884 },
-              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 172403 },
-              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 88421 }
+              { Name: 'id', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'service_name', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'secret_key', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'refresh_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'owner_email', Kinds: ['密码/密钥', '邮箱'], Level: 'high', Mode: 'field-content', Total: 2 }
             ],
             Rows: [
-              { Values: { customer_id: 'C10023891', real_name: 'Zhang San', id_card_no: '110101199003071234', mobile_phone: '13800138000', home_address: '北京市朝阳区建国路 88 号' } }
+              { Values: { id: '1', service_name: 'billing', secret_key: 'sk_live_mysql_demo_abcdef', refresh_token: 'rt_mysql_refresh_123456', owner_email: 'ops@example.internal' } },
+              { Values: { id: '2', service_name: 'crm', secret_key: 'ak_mysql_crm_abcdef', refresh_token: 'rt_mysql_refresh_654321', owner_email: 'security@example.internal' } }
+            ]
+          },
+          {
+            Database: 'audit_lab',
+            Schema: '',
+            Name: 'customer_profile',
+            Total: 2,
+            Columns: ['customer_id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'bank_card', 'api_token', 'home_address'],
+            Fields: [
+              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'bank_card', Kinds: ['银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'api_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
+            ],
+            Rows: [
+              { Values: { customer_id: '1', real_name: 'Zhang San', id_card_no: '110101199003071234', mobile_phone: '13800138000', email: 'audit@example.internal', bank_card: '6222020202021234', api_token: 'tok_live_mysql_123456', home_address: 'Beijing Road 88' } },
+              { Values: { customer_id: '2', real_name: 'Li Si', id_card_no: '310101198812121234', mobile_phone: '13900139000', email: 'risk@example.internal', bank_card: '6217001234567890', api_token: 'secret_mysql_abcdef', home_address: 'Shanghai Avenue 100' } }
+            ]
+          },
+          {
+            Database: 'audit_lab_archive',
+            Schema: '',
+            Name: 'customer_profile',
+            Total: 2,
+            Columns: ['id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'home_address'],
+            Fields: [
+              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
+            ],
+            Rows: [
+              { Values: { id: '1', real_name: 'Archive Carol', id_card_no: '110101198803033333', mobile_phone: '13700137003', email: 'archive.carol@example.internal', home_address: 'Guangzhou archive road 3' } },
+              { Values: { id: '2', real_name: 'Archive Dave', id_card_no: '110101198904044444', mobile_phone: '13600136004', email: 'archive.dave@example.internal', home_address: 'Shenzhen archive road 4' } }
+            ]
+          },
+          {
+            Database: 'audit_lab_extra',
+            Schema: '',
+            Name: 'access_tokens',
+            Total: 2,
+            Columns: ['id', 'service_name', 'secret_key', 'refresh_token', 'owner_email'],
+            Fields: [
+              { Name: 'id', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'service_name', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'secret_key', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'refresh_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'owner_email', Kinds: ['密码/密钥', '邮箱'], Level: 'high', Mode: 'field-content', Total: 2 }
+            ],
+            Rows: [
+              { Values: { id: '1', service_name: 'billing', secret_key: 'sk_live_extra_mysql_abcdef', refresh_token: 'rt_extra_mysql_123456', owner_email: 'billing-extra@example.internal' } },
+              { Values: { id: '2', service_name: 'ops', secret_key: 'ak_extra_mysql_ops_secret', refresh_token: 'rt_extra_mysql_654321', owner_email: 'ops-extra@example.internal' } }
+            ]
+          },
+          {
+            Database: 'audit_lab_extra',
+            Schema: '',
+            Name: 'customer_profile',
+            Total: 2,
+            Columns: ['id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'home_address'],
+            Fields: [
+              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
+              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
+              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
+            ],
+            Rows: [
+              { Values: { id: '1', real_name: 'Extra Alice', id_card_no: '110101199001011111', mobile_phone: '13800138001', email: 'extra.alice@example.internal', home_address: 'Beijing test road 1' } },
+              { Values: { id: '2', real_name: 'Extra Bob', id_card_no: '110101199002022222', mobile_phone: '13900139002', email: 'extra.bob@example.internal', home_address: 'Shanghai test road 2' } }
             ]
           }
         ]
       },
       Logs: [
         { Time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), Level: 'info', Message: '枚举字段并启动表级扫描' },
-        { Time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), Level: 'debug', Message: 'sales.customer_profile 命中 3 个敏感字段' }
+        { Time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), Level: 'debug', Message: 'audit_lab / audit_lab_archive / audit_lab_extra 命中多库敏感字段' }
       ]
     };
   }
@@ -686,19 +900,60 @@
               <button on:click={chooseFscanFile}>选择文件</button>
               <button on:click={parseFscan}>解析预览</button>
             </div>
-            <label>
-              <span>手工目标清单</span>
-              <textarea
-                class="target-list-input"
-                bind:value={request.FscanText}
-                on:change={parseFscanText}
-                spellcheck="false"
-                placeholder={'MySQL 10.211.55.16:13306 root:pass\nPostgreSQL 10.211.55.16:15432 audit:pass\nRedis 10.211.55.16:16379 pass'}
-              ></textarea>
-            </label>
+            <div class="manual-target-box">
+              <div class="manual-target-heading">
+                <span>手工多目标</span>
+                <button type="button" on:click={() => insertManualTarget(manualTargets.length)}>插入目标</button>
+              </div>
+              <div class="manual-target-list">
+                {#each manualTargets as target, index (target.ID)}
+                  <div class="manual-target-row">
+                    <div class="manual-target-grid">
+                      <label>
+                        <span>数据库</span>
+                        <select bind:value={target.Type} on:change={() => changeManualTargetType(index)}>
+                          {#each dbTypes as type}
+                            <option value={type}>{type}</option>
+                          {/each}
+                        </select>
+                      </label>
+                      <label>
+                        <span>端口</span>
+                        <input type="number" min="1" bind:value={target.Port} />
+                      </label>
+                      <label class="wide">
+                        <span>Host</span>
+                        <input bind:value={target.Host} placeholder="127.0.0.1" />
+                      </label>
+                      <div class="manual-credential-grid">
+                        <label>
+                          <span>账号</span>
+                          <input bind:value={target.User} disabled={target.Type === 'redis'} placeholder={target.Type === 'redis' ? 'Redis 可留空' : 'root'} />
+                        </label>
+                        <label>
+                          <span>密码</span>
+                          <div class="manual-password-field">
+                            {#if target.ShowPassword}
+                              <input bind:value={target.Password} type="text" autocomplete="off" />
+                            {:else}
+                              <input bind:value={target.Password} type="password" autocomplete="off" />
+                            {/if}
+                            <button type="button" on:click={() => toggleManualTargetPassword(index)}>{target.ShowPassword ? '隐藏' : '查看'}</button>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                    <div class="manual-target-actions">
+                      <button type="button" on:click={() => insertManualTarget(index + 1)}>插入</button>
+                      <button type="button" on:click={() => removeManualTarget(index)}>删除</button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
             <div class="button-row">
-              <button on:click={parseFscanText}>解析清单</button>
-              <button on:click={() => { request.FscanText = ''; fscanPreview = { Total: 0, Targets: [] }; }}>清空清单</button>
+              <button on:click={parseManualTargets}>解析手工目标</button>
+              <button on:click={() => { manualTargets = [createManualTarget()]; request.FscanText = ''; fscanPreview = { Total: 0, Targets: [] }; }}>清空手工目标</button>
             </div>
             <label class="toggle-line">
               <input type="checkbox" bind:checked={request.SplitOutput} />
@@ -790,7 +1045,7 @@
       <section class="scan-meter">
         <div>
           <span>当前目标</span>
-          <strong>{state.TargetLabel || request.Host || request.Fscan || (request.FscanText?.trim() ? '手工目标清单' : '') || '未设置'}</strong>
+          <strong>{currentTargetLabel}</strong>
         </div>
         <div class="meter-track"><span style={`width:${state.Progress || 0}%`}></span></div>
         <div class="meter-meta">
@@ -840,7 +1095,7 @@
               {#each tables as table, index}
                 <tr class:active={index === selectedTableIndex} on:click={() => (selectedTableIndex = index)}>
                   <td>{table.Database}</td>
-                  <td>{table.Schema}.{table.Name}</td>
+                  <td>{tableLabel(table)}</td>
                   <td>{(table.Fields ?? []).map((f) => f.Name).join(', ')}</td>
                   <td>{table.Total}</td>
                   <td><span class={`risk-dot ${tableRisk(table)}`}>{riskText(tableRisk(table))}</span></td>

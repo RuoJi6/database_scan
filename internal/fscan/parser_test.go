@@ -98,3 +98,47 @@ func TestParseTextDeduplicatesAndIgnoresNoise(t *testing.T) {
 		t.Fatalf("unexpected target order: %#v", targets)
 	}
 }
+
+func TestParseTextManualTwoLineTargets(t *testing.T) {
+	targets, err := ParseText(`mysql 10.211.55.16:13306
+root:scanpass
+postgresql 10.211.55.16:15432
+audit:scanpass
+redis 10.211.55.16:16379
+scanpass`)
+	if err != nil {
+		t.Fatalf("ParseText returned error: %v", err)
+	}
+	if len(targets) != 3 {
+		t.Fatalf("expected 3 manual targets, got %#v", targets)
+	}
+	if targets[0].Type != "mysql" || targets[0].User != "root" || targets[0].Password != "scanpass" {
+		t.Fatalf("unexpected mysql target: %#v", targets[0])
+	}
+	if targets[1].Type != "postgres" || targets[1].Port != 15432 || targets[1].User != "audit" {
+		t.Fatalf("unexpected postgres target: %#v", targets[1])
+	}
+	if targets[2].Type != "redis" || targets[2].User != "" || targets[2].Password != "scanpass" {
+		t.Fatalf("unexpected redis target: %#v", targets[2])
+	}
+}
+
+func TestParseTextManualTargetsAcceptAdapterAliases(t *testing.T) {
+	targets, err := ParseText(`opengauss 10.211.55.16:15432
+audit:scanpass
+oceanbase 10.211.55.16:13306
+root:scanpass
+kingbase 10.211.55.16:15433
+system:scanpass
+go-ora 10.211.55.16:11521
+system:scanpass`)
+	if err != nil {
+		t.Fatalf("ParseText returned error: %v", err)
+	}
+	if len(targets) != 4 {
+		t.Fatalf("expected 4 manual alias targets, got %#v", targets)
+	}
+	if targets[0].Type != "opengauss" || targets[1].Type != "oceanbase" || targets[2].Type != "kingbase" || targets[3].Type != "oracle" {
+		t.Fatalf("unexpected target types: %#v", targets)
+	}
+}

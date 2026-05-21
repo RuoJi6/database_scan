@@ -108,7 +108,13 @@ func DefaultScanRequest() ScanRequest {
 }
 
 func SupportedDatabaseTypes() []string {
-	return []string{"mysql", "mariadb", "postgres", "mssql", "oracle", "oceanbase", "opengauss", "kingbase", "redis"}
+	return []string{
+		"mysql", "mariadb", "tidb", "oceanbase", "oceanbase-mysql", "polardb-mysql", "doris", "starrocks", "gbase-mysql",
+		"mssql", "sqlserver",
+		"postgres", "postgresql", "opengauss", "gaussdb", "kingbase", "kingbasees", "highgo", "polardb-postgres",
+		"oracle", "go-ora",
+		"redis",
+	}
 }
 
 func ValidateScanRequest(req ScanRequest) (Config, error) {
