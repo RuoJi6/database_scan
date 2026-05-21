@@ -15,7 +15,7 @@ env:
 jobs:
   test:
     name: Test CLI and GUI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,9 +39,10 @@ jobs:
       - name: Test CLI packages
         run: go test ./...
 
-      - name: Test GUI Go package
-        working-directory: gui
-        run: go test ./...
+      - name: Install Linux GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Check GUI frontend
         working-directory: gui/frontend
@@ -49,6 +50,10 @@ jobs:
           npm ci
           npm run check
           npm run build
+
+      - name: Test GUI Go package
+        working-directory: gui
+        run: go test -tags webkit2_41 ./...
 
   build:
     name: Build CLI ${{ matrix.goos }}-${{ matrix.goarch }}
