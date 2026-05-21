@@ -168,7 +168,7 @@ func TestWriteXLSXMixedSQLAndRedisLayout(t *testing.T) {
 		t.Fatalf("WriteXLSX returned error: %v", err)
 	}
 	names := SheetNamesForTest(result)
-	for _, want := range []string{"敏感信息汇总", "dbo.Users", "Redis 汇总", "Redis Keys"} {
+	for _, want := range []string{"敏感信息汇总", "app.dbo.Users", "Redis 汇总", "Redis Keys"} {
 		found := false
 		for _, name := range names {
 			if name == want {
@@ -212,6 +212,14 @@ func TestSheetNamesForTest(t *testing.T) {
 	result := scanner.Result{Tables: []scanner.TableResult{{Schema: "dbo", Name: "Users"}, {Schema: "dbo", Name: "Users"}}}
 	names := SheetNamesForTest(result)
 	if len(names) != 3 || names[0] != "dbo.Users" || names[1] != "dbo.Users 2" || names[2] != "敏感信息汇总" {
+		t.Fatalf("unexpected sheet names: %#v", names)
+	}
+}
+
+func TestSheetNamesUseDatabaseWhenSchemaIsEmpty(t *testing.T) {
+	result := scanner.Result{Tables: []scanner.TableResult{{Database: "audit_lab", Name: "access_tokens"}}}
+	names := SheetNamesForTest(result)
+	if len(names) != 2 || names[0] != "audit_lab.access_tokens" || names[1] != "敏感信息汇总" {
 		t.Fatalf("unexpected sheet names: %#v", names)
 	}
 }

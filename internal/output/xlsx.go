@@ -81,7 +81,7 @@ func buildSheets(result scanner.Result) []xlsxSheet {
 		headers, sampleRows := scanner.RowSampleRows(table, false)
 		rows = append(rows, styledHeaderCells(headers, table))
 		rows = append(rows, styledSampleRows(headers, sampleRows, table)...)
-		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName(table.Schema+"."+table.Name, used), Rows: rows})
+		sheets = append(sheets, xlsxSheet{Name: uniqueSheetName(sqlTableSheetName(table), used), Rows: rows})
 	}
 	if len(redisTables) > 0 {
 		sheets = append(sheets, buildRedisSheets(redisTables, used)...)
@@ -203,6 +203,20 @@ func cells(values ...string) []xlsxCell {
 		out = append(out, xlsxCell{Value: value})
 	}
 	return out
+}
+
+func sqlTableSheetName(table scanner.TableResult) string {
+	parts := make([]string, 0, 3)
+	if strings.TrimSpace(table.Database) != "" {
+		parts = append(parts, table.Database)
+	}
+	if strings.TrimSpace(table.Schema) != "" {
+		parts = append(parts, table.Schema)
+	}
+	if strings.TrimSpace(table.Name) != "" {
+		parts = append(parts, table.Name)
+	}
+	return strings.Join(parts, ".")
 }
 
 func styledHeaderCells(headers []string, table scanner.TableResult) []xlsxCell {
