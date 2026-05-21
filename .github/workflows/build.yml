@@ -114,13 +114,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: darwin-universal
+          - name: darwin-amd64
             os: macos-latest
-            platform: darwin/universal
+            platform: darwin/amd64
+            tags: ""
+          - name: darwin-arm64
+            os: macos-latest
+            platform: darwin/arm64
             tags: ""
           - name: windows-amd64
             os: windows-latest
             platform: windows/amd64
+            tags: ""
+          - name: windows-arm64
+            os: windows-latest
+            platform: windows/arm64
             tags: ""
           - name: linux-amd64
             os: ubuntu-24.04
