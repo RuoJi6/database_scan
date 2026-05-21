@@ -199,6 +199,60 @@ func TestColumnWidths(t *testing.T) {
 	}
 }
 
+func TestSummaryRowsDoNotPrefixTablesWithoutSchema(t *testing.T) {
+	rows := summaryRows([]scanner.TableResult{{Database: "audit_lab", Name: "access_tokens", Total: 2}})
+	found := false
+	for _, row := range rows {
+		for _, cell := range row {
+			if strings.Contains(cell.Value, ".access_tokens") {
+				t.Fatalf("summary table label should not start with dot: %#v", rows)
+			}
+			if strings.Contains(cell.Value, "access_tokens【实际数据行数：2】") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("summary table label was not found: %#v", rows)
+	}
+}
+
+func TestXLSXEscapesInvalidXMLTextAndSheetNames(t *testing.T) {
+	result := scanner.Result{Tables: []scanner.TableResult{{
+		Database: "10.211.55.16:13306/audit_lab",
+		Name:     "access_tokens\x01",
+		Columns:  []string{"secret"},
+		Fields:   []scanner.FieldResult{{Name: "secret", Kinds: []detector.Kind{detector.Password}, Mode: scanner.Content, Total: 1}},
+		Rows:     []scanner.RowSample{{Values: map[string]string{"secret": "sk_live\x02demo"}}},
+	}}}
+	path := filepath.Join(t.TempDir(), "clean.xlsx")
+	if err := WriteXLSX(path, result); err != nil {
+		t.Fatalf("WriteXLSX returned error: %v", err)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open xlsx zip: %v", err)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if !strings.HasSuffix(f.Name, ".xml") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		if strings.ContainsAny(string(data), "\x01\x02") {
+			t.Fatalf("xml contains invalid control character in %s: %q", f.Name, string(data))
+		}
+	}
+}
+
 func TestDisplayWidth(t *testing.T) {
 	if got := displayWidth("abc"); got != 3 {
 		t.Fatalf("unexpected ascii width: %d", got)

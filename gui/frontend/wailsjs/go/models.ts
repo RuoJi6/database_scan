@@ -1,5 +1,37 @@
 export namespace app {
 	
+	export class ConnectionTestResult {
+	    Success: boolean;
+	    Message: string;
+	    Type: string;
+	    Host: string;
+	    Port: number;
+	    Database: string;
+	    User: string;
+	    Proxy: string;
+	    Version: string;
+	    ResolvedAddr: string;
+	    ServerTime: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConnectionTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Success = source["Success"];
+	        this.Message = source["Message"];
+	        this.Type = source["Type"];
+	        this.Host = source["Host"];
+	        this.Port = source["Port"];
+	        this.Database = source["Database"];
+	        this.User = source["User"];
+	        this.Proxy = source["Proxy"];
+	        this.Version = source["Version"];
+	        this.ResolvedAddr = source["ResolvedAddr"];
+	        this.ServerTime = source["ServerTime"];
+	    }
+	}
 	export class CustomSQLResult {
 	    Columns: string[];
 	    Rows: string[][];

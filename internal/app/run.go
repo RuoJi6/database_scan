@@ -34,10 +34,39 @@ func Run(ctx context.Context, args []string) error {
 	if !cfg.NoBanner {
 		printBanner(os.Stdout, !cfg.NoColor && helpColorEnabled(nil))
 	}
+	if cfg.TestConnection {
+		return runConnectionTest(ctx, cfg)
+	}
 	if cfg.Fscan != "" {
 		return runFscan(ctx, cfg)
 	}
 	return runSingle(ctx, cfg)
+}
+
+func runConnectionTest(ctx context.Context, cfg Config) error {
+	req := requestFromConfig(cfg)
+	req.Fscan = ""
+	req.FscanText = ""
+	req.SQL = ""
+	req.Output = ""
+	result, err := TestConnection(ctx, req)
+	if err != nil {
+		return err
+	}
+	output.Section(os.Stdout, "连接测试")
+	rows := [][]string{
+		{"状态", "成功"},
+		{"目标", fmt.Sprintf("%s:%d", result.Host, result.Port)},
+		{"数据库类型", result.Type},
+		{"当前库/DB", blank(result.Database)},
+		{"当前用户", blank(result.User)},
+		{"代理", blank(result.Proxy)},
+		{"解析IP", blank(result.ResolvedAddr)},
+		{"版本", blank(output.OneLine(result.Version))},
+		{"信息", result.Message},
+	}
+	output.Table(os.Stdout, []string{"字段", "值"}, rows)
+	return nil
 }
 
 func runSingle(ctx context.Context, cfg Config) error {
@@ -481,7 +510,7 @@ func printScanResult(result scanner.Result, color bool) {
 				fmt.Fprintln(os.Stdout)
 			}
 			fmt.Fprintf(os.Stdout, "[数据库] %s\n", table.Database)
-			fmt.Fprintf(os.Stdout, "[表] %s.%s【实际数据行数：%d】\n", table.Schema, table.Name, table.Total)
+			fmt.Fprintf(os.Stdout, "[表] %s【实际数据行数：%d】\n", tableDisplayName(table), table.Total)
 			for _, row := range scanner.SensitiveFieldRows(table.Fields, color) {
 				fmt.Fprintf(os.Stdout, "%s （存在行数：%s）\n", row[0], row[1])
 			}
@@ -546,6 +575,20 @@ func colorRedisValue(value string, fields []scanner.FieldResult, color bool) str
 		}
 	}
 	return value
+}
+
+func tableDisplayName(table scanner.TableResult) string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(table.Schema) != "" {
+		parts = append(parts, table.Schema)
+	}
+	if strings.TrimSpace(table.Name) != "" {
+		parts = append(parts, table.Name)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ".")
 }
 
 func blank(s string) string {

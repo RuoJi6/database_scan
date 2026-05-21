@@ -369,7 +369,7 @@ textarea.target-list-input {
 
 .manual-target-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
@@ -391,6 +391,26 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.connection-test-result {
+  display: grid;
+  gap: 3px;
+  margin: 0 10px 10px;
+  padding: 8px 10px;
+  border: 1px solid #21453e;
+  border-radius: 4px;
+  background: #10201d;
+  color: #96e0c0;
+  font-size: 12px;
+}
+
+.connection-test-result span {
+  color: #93a0a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toggle-line {
@@ -703,7 +723,7 @@ th.low,
 .sample-group-heading {
   height: 32px;
   display: grid;
-  grid-template-columns: 140px minmax(220px, 1fr) 96px;
+  grid-template-columns: minmax(260px, max-content) minmax(220px, max-content) 96px;
   align-items: center;
   gap: 10px;
   padding: 0 10px;

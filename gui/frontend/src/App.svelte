@@ -11,7 +11,8 @@
     ParseFscanText,
     RunCustomSQL,
     StartScan,
-    StopScan
+    StopScan,
+    TestConnection
   } from '../wailsjs/go/main/App.js';
 
   type ScanRequest = {
@@ -53,6 +54,19 @@
   };
   type LogEntry = { Time: string; Level: string; Message: string };
   type SQLResult = { Columns: string[]; Rows: string[][]; Total: number; Shown: number; Affected: number; IsQuery: boolean };
+  type ConnectionTestResult = {
+    Success: boolean;
+    Message: string;
+    Type: string;
+    Host: string;
+    Port: number;
+    Database: string;
+    User: string;
+    Proxy: string;
+    Version: string;
+    ResolvedAddr: string;
+    ServerTime: string;
+  };
   type ScanState = {
     JobID: string;
     Status: string;
@@ -121,10 +135,10 @@
   let request: ScanRequest = { ...fallbackDefaults };
   let state: ScanState = emptyState;
   let dbTypes = [
-    'mysql', 'mariadb', 'tidb', 'oceanbase', 'oceanbase-mysql', 'polardb-mysql', 'doris', 'starrocks', 'gbase-mysql',
-    'mssql', 'sqlserver',
-    'postgres', 'postgresql', 'opengauss', 'gaussdb', 'kingbase', 'kingbasees', 'highgo', 'polardb-postgres',
-    'oracle', 'go-ora',
+    'mysql', 'mariadb', 'tidb', 'oceanbase', 'polardb-mysql', 'doris', 'starrocks', 'gbase-mysql',
+    'mssql',
+    'postgres', 'opengauss', 'gaussdb', 'kingbase', 'highgo', 'polardb-postgres',
+    'oracle',
     'redis'
   ];
   let selectedTableIndex = -1;
@@ -142,6 +156,8 @@
   let resizingResultPanel = false;
   let evidencePanelHeight = 540;
   let resizingEvidencePanel = false;
+  let testingConnection = false;
+  let connectionTest: ConnectionTestResult | undefined;
 
   const defaultPorts: Record<string, number> = {
     mysql: 3306,
@@ -290,6 +306,65 @@
     }
   }
 
+  async function testCurrentConnection() {
+    formError = '';
+    connectionTest = undefined;
+    const next = connectionRequestFrom(request);
+    const validationError = validateRequest(next, activePage === 'sql' ? 'sql' : 'single');
+    if (validationError && !validationError.includes('SQL 原文')) {
+      formError = validationError;
+      return;
+    }
+    await runConnectionTest(next);
+  }
+
+  async function testManualTarget(index: number) {
+    formError = '';
+    connectionTest = undefined;
+    const target = manualTargets[index];
+    if (!target) return;
+    const rowError = validateOneManualTarget(target, index + 1);
+    if (rowError) {
+      formError = rowError;
+      return;
+    }
+    await runConnectionTest(connectionRequestFrom({
+      ...request,
+      Type: target.Type,
+      Host: target.Host,
+      Port: Number(target.Port),
+      User: target.Type === 'redis' ? '' : target.User,
+      Password: target.Password
+    }));
+  }
+
+  async function runConnectionTest(next: ScanRequest) {
+    testingConnection = true;
+    try {
+      if (!hasWailsRuntime()) {
+        connectionTest = {
+          Success: true,
+          Message: next.Proxy ? '浏览器预览：代理连接测试通过' : '浏览器预览：连接测试通过',
+          Type: next.Type,
+          Host: next.Host,
+          Port: next.Port,
+          Database: next.Database || '-',
+          User: next.User || '-',
+          Proxy: next.Proxy || '',
+          Version: 'preview',
+          ResolvedAddr: next.Host,
+          ServerTime: '-'
+        };
+        return;
+      }
+      connectionTest = await TestConnection(next);
+    } catch (error) {
+      formError = normalizeError(error);
+    } finally {
+      testingConnection = false;
+    }
+  }
+
   async function chooseFscanFile() {
     if (!hasWailsRuntime()) return;
     const path = await ChooseFscanFile();
@@ -405,6 +480,17 @@
     return next;
   }
 
+  function connectionRequestFrom(source: ScanRequest): ScanRequest {
+    return {
+      ...source,
+      Fscan: '',
+      FscanText: '',
+      SQL: '',
+      Output: '',
+      SplitOutput: false
+    };
+  }
+
   function validateRequest(next: ScanRequest, page: 'single' | 'fscan' | 'sql') {
     if (page === 'fscan') {
       const manualError = validateManualTargets();
@@ -501,13 +587,18 @@
     const activeTargets = manualTargets.filter(manualTargetHasInput);
     if (!activeTargets.length) return '';
     for (const [index, target] of activeTargets.entries()) {
-      const rowNo = index + 1;
-      if (!target.Type?.trim()) return `第 ${rowNo} 个目标请选择数据库类型`;
-      if (!target.Host?.trim()) return `第 ${rowNo} 个目标请填写 Host`;
-      if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
-      if (target.Type !== 'redis' && !target.User?.trim()) return `第 ${rowNo} 个目标请填写账号`;
-      if (target.Type === 'redis' && !target.Password?.trim()) return `第 ${rowNo} 个 Redis 目标请填写密码`;
+      const error = validateOneManualTarget(target, index + 1);
+      if (error) return error;
     }
+    return '';
+  }
+
+  function validateOneManualTarget(target: ManualTarget, rowNo: number) {
+    if (!target.Type?.trim()) return `第 ${rowNo} 个目标请选择数据库类型`;
+    if (!target.Host?.trim()) return `第 ${rowNo} 个目标请填写 Host`;
+    if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
+    if (target.Type !== 'redis' && !target.User?.trim()) return `第 ${rowNo} 个目标请填写账号`;
+    if (target.Type === 'redis' && !target.Password?.trim()) return `第 ${rowNo} 个 Redis 目标请填写密码`;
     return '';
   }
 
@@ -883,7 +974,16 @@
               <span>代理</span>
               <input bind:value={request.Proxy} placeholder="socks5://127.0.0.1:1080" />
             </label>
+            <button class="full" type="button" on:click={testCurrentConnection} disabled={testingConnection}>
+              {testingConnection ? '测试中' : request.Proxy ? '测试连接/代理' : '测试连接'}
+            </button>
           </div>
+          {#if connectionTest}
+            <div class="connection-test-result">
+              <strong>{connectionTest.Message}</strong>
+              <span>{connectionTest.Type} · {connectionTest.Host}:{connectionTest.Port} · {connectionTest.Proxy || '直连'}</span>
+            </div>
+          {/if}
         </section>
       {:else}
         <section class="panel">
@@ -944,6 +1044,7 @@
                       </div>
                     </div>
                     <div class="manual-target-actions">
+                      <button type="button" on:click={() => testManualTarget(index)} disabled={testingConnection}>测试</button>
                       <button type="button" on:click={() => insertManualTarget(index + 1)}>插入</button>
                       <button type="button" on:click={() => removeManualTarget(index)}>删除</button>
                     </div>
@@ -955,6 +1056,16 @@
               <button on:click={parseManualTargets}>解析手工目标</button>
               <button on:click={() => { manualTargets = [createManualTarget()]; request.FscanText = ''; fscanPreview = { Total: 0, Targets: [] }; }}>清空手工目标</button>
             </div>
+            <label>
+              <span>批量代理</span>
+              <input bind:value={request.Proxy} placeholder="socks5://127.0.0.1:1080" />
+            </label>
+            {#if connectionTest}
+              <div class="connection-test-result">
+                <strong>{connectionTest.Message}</strong>
+                <span>{connectionTest.Type} · {connectionTest.Host}:{connectionTest.Port} · {connectionTest.Proxy || '直连'}</span>
+              </div>
+            {/if}
             <label class="toggle-line">
               <input type="checkbox" bind:checked={request.SplitOutput} />
               <span>按目标拆分 Excel</span>
@@ -1143,7 +1254,7 @@
           <div class="sample-scroll">
             {#each filteredSampleGroups as group}
               <section class="sample-group">
-                <div class="sample-group-heading">
+                <div class="sample-group-heading" title={`${group.Table.Database} / ${tableLabel(group.Table)}`}>
                   <strong>{group.Table.Database}</strong>
                   <span>{tableLabel(group.Table)}</span>
                   <em>{group.Rows.length}/{group.Table.Rows?.length ?? 0} rows</em>

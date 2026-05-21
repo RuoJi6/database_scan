@@ -45,3 +45,7 @@ export function StartScan(arg1) {
 export function StopScan(arg1) {
   return window['go']['main']['App']['StopScan'](arg1);
 }
+
+export function TestConnection(arg1) {
+  return window['go']['main']['App']['TestConnection'](arg1);
+}

@@ -23,3 +23,5 @@ export function RunCustomSQL(arg1:app.ScanRequest):Promise<app.CustomSQLResult>;
 export function StartScan(arg1:app.ScanRequest):Promise<app.ScanJobState>;
 
 export function StopScan(arg1:string):Promise<app.ScanJobState>;
+
+export function TestConnection(arg1:app.ScanRequest):Promise<app.ConnectionTestResult>;

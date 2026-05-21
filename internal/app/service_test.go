@@ -64,15 +64,20 @@ ssh 127.0.0.1:22 root:pass`)
 	}
 }
 
-func TestSupportedDatabaseTypesIncludesAdapterAliases(t *testing.T) {
+func TestSupportedDatabaseTypesReturnsCanonicalGUIChoices(t *testing.T) {
 	types := SupportedDatabaseTypes()
 	seen := map[string]bool{}
 	for _, typ := range types {
 		seen[typ] = true
 	}
-	for _, typ := range []string{"mysql", "tidb", "oceanbase", "polardb-mysql", "postgres", "opengauss", "gaussdb", "kingbase", "mssql", "sqlserver", "oracle", "go-ora", "redis"} {
+	for _, typ := range []string{"mysql", "tidb", "oceanbase", "polardb-mysql", "postgres", "opengauss", "gaussdb", "kingbase", "mssql", "oracle", "redis"} {
 		if !seen[typ] {
 			t.Fatalf("SupportedDatabaseTypes missing %q: %#v", typ, types)
+		}
+	}
+	for _, alias := range []string{"postgresql", "sqlserver", "go-ora", "kingbasees", "oceanbase-mysql"} {
+		if seen[alias] {
+			t.Fatalf("GUI type list should not duplicate alias %q: %#v", alias, types)
 		}
 	}
 }

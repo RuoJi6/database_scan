@@ -75,6 +75,20 @@ type CustomSQLResult struct {
 	IsQuery  bool
 }
 
+type ConnectionTestResult struct {
+	Success      bool
+	Message      string
+	Type         string
+	Host         string
+	Port         int
+	Database     string
+	User         string
+	Proxy        string
+	Version      string
+	ResolvedAddr string
+	ServerTime   string
+}
+
 type ServiceHooks struct {
 	OnLog    func(LogEntry)
 	OnTable  func(scanner.TableResult)
@@ -109,10 +123,10 @@ func DefaultScanRequest() ScanRequest {
 
 func SupportedDatabaseTypes() []string {
 	return []string{
-		"mysql", "mariadb", "tidb", "oceanbase", "oceanbase-mysql", "polardb-mysql", "doris", "starrocks", "gbase-mysql",
-		"mssql", "sqlserver",
-		"postgres", "postgresql", "opengauss", "gaussdb", "kingbase", "kingbasees", "highgo", "polardb-postgres",
-		"oracle", "go-ora",
+		"mysql", "mariadb", "tidb", "oceanbase", "polardb-mysql", "doris", "starrocks", "gbase-mysql",
+		"mssql",
+		"postgres", "opengauss", "gaussdb", "kingbase", "highgo", "polardb-postgres",
+		"oracle",
 		"redis",
 	}
 }
@@ -458,6 +472,63 @@ func RunCustomSQL(ctx context.Context, req ScanRequest) (CustomSQLResult, error)
 	}
 	defer conn.Close()
 	return executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout)
+}
+
+func TestConnection(ctx context.Context, req ScanRequest) (ConnectionTestResult, error) {
+	req.Fscan = ""
+	req.FscanText = ""
+	req.SQL = ""
+	req.Output = ""
+	req.SplitOutput = false
+	cfg, err := ValidateScanRequest(req)
+	if err != nil {
+		return ConnectionTestResult{}, err
+	}
+	testCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+	if cfg.Type == "redis" {
+		info, err := redisscan.TestConnection(testCtx, redisscan.Config{
+			Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password, Database: cfg.Database, Proxy: cfg.Proxy,
+			Timeout: cfg.Timeout, Limit: 1, Level: cfg.Level, Mask: true,
+		})
+		if err != nil {
+			return ConnectionTestResult{}, fmt.Errorf("test redis connection: %w", err)
+		}
+		return ConnectionTestResult{
+			Success: true, Message: "Redis 连接测试通过", Type: cfg.Type, Host: cfg.Host, Port: cfg.Port,
+			Database: info.DB, User: cfg.User, Proxy: cfg.Proxy, Version: info.Version, ResolvedAddr: info.ResolvedIP, ServerTime: info.ServerTime,
+		}, nil
+	}
+	adapter, err := db.NewAdapter(cfg.Type)
+	if err != nil {
+		return ConnectionTestResult{}, err
+	}
+	dialer, err := iproxy.FromURL(cfg.Proxy, cfg.Timeout)
+	if err != nil {
+		return ConnectionTestResult{}, err
+	}
+	dbCfg := db.Config{
+		Type: cfg.Type, Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password,
+		Database: connectionDatabase(adapter, cfg.Database), Proxy: cfg.Proxy, IncludeSystem: cfg.IncludeSystem, Timeout: cfg.Timeout,
+	}
+	conn, err := openDatabaseWithRetry(testCtx, adapter, dbCfg, dialer, nil)
+	if err != nil {
+		return ConnectionTestResult{}, fmt.Errorf("test database connection: %w", err)
+	}
+	defer conn.Close()
+	infoCtx, infoCancel := context.WithTimeout(testCtx, cfg.Timeout)
+	info, err := adapter.ServerInfo(infoCtx, conn, dbCfg)
+	infoCancel()
+	if err != nil {
+		return ConnectionTestResult{}, fmt.Errorf("read server info: %w", err)
+	}
+	if addrs, err := net.LookupHost(cfg.Host); err == nil && len(addrs) > 0 {
+		info.ResolvedAddr = strings.Join(addrs, ",")
+	}
+	return ConnectionTestResult{
+		Success: true, Message: "数据库连接测试通过", Type: cfg.Type, Host: cfg.Host, Port: cfg.Port,
+		Database: info.CurrentDB, User: info.CurrentUser, Proxy: cfg.Proxy, Version: info.Version, ResolvedAddr: info.ResolvedAddr, ServerTime: info.ServerTime,
+	}, nil
 }
 
 func openDatabaseWithRetry(ctx context.Context, adapter db.Adapter, cfg db.Config, dialer db.ContextDialer, log func(string, string)) (*sql.DB, error) {

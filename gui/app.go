@@ -151,6 +151,10 @@ func (a *App) RunCustomSQL(req coreapp.ScanRequest) (coreapp.CustomSQLResult, er
 	return coreapp.RunCustomSQL(a.ctx, req)
 }
 
+func (a *App) TestConnection(req coreapp.ScanRequest) (coreapp.ConnectionTestResult, error) {
+	return coreapp.TestConnection(a.ctx, req)
+}
+
 func (a *App) ParseFscanFile(path string) (coreapp.FscanPreview, error) {
 	return coreapp.ParseFscanPreview(path)
 }

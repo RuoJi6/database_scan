@@ -52,9 +52,32 @@ type client struct {
 }
 
 func Scan(ctx context.Context, cfg Config) (Info, scanner.Result, error) {
-	dialer, err := iproxy.FromURL(cfg.Proxy, cfg.Timeout)
+	info, c, closeFn, err := connectAndReadInfo(ctx, cfg)
 	if err != nil {
 		return Info{}, scanner.Result{}, err
+	}
+	defer closeFn()
+	keys, err := scanKeys(ctx, c, cfg)
+	if err != nil {
+		return info, scanner.Result{}, err
+	}
+	result := scanKeyValues(ctx, c, cfg, keys)
+	return info, result, nil
+}
+
+func TestConnection(ctx context.Context, cfg Config) (Info, error) {
+	info, _, closeFn, err := connectAndReadInfo(ctx, cfg)
+	if err != nil {
+		return Info{}, err
+	}
+	defer closeFn()
+	return info, nil
+}
+
+func connectAndReadInfo(ctx context.Context, cfg Config) (Info, *client, func(), error) {
+	dialer, err := iproxy.FromURL(cfg.Proxy, cfg.Timeout)
+	if err != nil {
+		return Info{}, nil, nil, err
 	}
 	if cfg.Port == 0 {
 		cfg.Port = 6379
@@ -64,9 +87,9 @@ func Scan(ctx context.Context, cfg Config) (Info, scanner.Result, error) {
 	defer cancel()
 	conn, err := dialer.DialContext(dialCtx, "tcp", address)
 	if err != nil {
-		return Info{}, scanner.Result{}, fmt.Errorf("connect redis: %w", err)
+		return Info{}, nil, nil, fmt.Errorf("connect redis: %w", err)
 	}
-	defer conn.Close()
+	closeFn := func() { _ = conn.Close() }
 	c := &client{conn: conn, r: bufio.NewReader(conn)}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
@@ -80,24 +103,22 @@ func Scan(ctx context.Context, cfg Config) (Info, scanner.Result, error) {
 			args = []string{"AUTH", cfg.User, cfg.Password}
 		}
 		if _, err := c.command(args...); err != nil {
-			return Info{}, scanner.Result{}, fmt.Errorf("redis auth: %w", err)
+			closeFn()
+			return Info{}, nil, nil, fmt.Errorf("redis auth: %w", err)
 		}
 	}
 	if cfg.Database != "" {
 		if _, err := c.command("SELECT", cfg.Database); err != nil {
-			return Info{}, scanner.Result{}, fmt.Errorf("redis select db %s: %w", cfg.Database, err)
+			closeFn()
+			return Info{}, nil, nil, fmt.Errorf("redis select db %s: %w", cfg.Database, err)
 		}
 	}
 	info, err := readInfo(c, cfg)
 	if err != nil {
-		return Info{}, scanner.Result{}, err
+		closeFn()
+		return Info{}, nil, nil, err
 	}
-	keys, err := scanKeys(ctx, c, cfg)
-	if err != nil {
-		return info, scanner.Result{}, err
-	}
-	result := scanKeyValues(ctx, c, cfg, keys)
-	return info, result, nil
+	return info, c, closeFn, nil
 }
 
 func readInfo(c *client, cfg Config) (Info, error) {

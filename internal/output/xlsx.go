@@ -184,7 +184,7 @@ func summaryRows(tables []scanner.TableResult) [][]xlsxCell {
 		}
 		rows = append(rows,
 			cells("[数据库]", table.Database),
-			cells("[表]", fmt.Sprintf("%s.%s【实际数据行数：%d】", table.Schema, table.Name, table.Total)),
+			cells("[表]", fmt.Sprintf("%s【实际数据行数：%d】", sqlTableLabel(table), table.Total)),
 		)
 		for _, field := range table.Fields {
 			rows = append(rows, []xlsxCell{
@@ -215,6 +215,20 @@ func sqlTableSheetName(table scanner.TableResult) string {
 	}
 	if strings.TrimSpace(table.Name) != "" {
 		parts = append(parts, table.Name)
+	}
+	return strings.Join(parts, ".")
+}
+
+func sqlTableLabel(table scanner.TableResult) string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(table.Schema) != "" {
+		parts = append(parts, table.Schema)
+	}
+	if strings.TrimSpace(table.Name) != "" {
+		parts = append(parts, table.Name)
+	}
+	if len(parts) == 0 {
+		return "-"
 	}
 	return strings.Join(parts, ".")
 }
@@ -281,7 +295,8 @@ func uniqueSheetName(name string, used map[string]int) string {
 
 func sanitizeSheetName(name string) string {
 	replacer := strings.NewReplacer("[", "_", "]", "_", ":", "_", "*", "_", "?", "_", "/", "_", "\\", "_")
-	name = strings.TrimSpace(replacer.Replace(name))
+	name = strings.TrimSpace(replacer.Replace(cleanXMLText(strings.ToValidUTF8(name, "_"))))
+	name = strings.Trim(name, "'")
 	if name == "" {
 		name = "Sheet"
 	}
@@ -448,8 +463,25 @@ func cellRef(col, row int) string {
 
 func xmlEscape(s string) string {
 	var b strings.Builder
-	_ = xml.EscapeText(&b, []byte(s))
+	_ = xml.EscapeText(&b, []byte(cleanXMLText(strings.ToValidUTF8(s, "_"))))
 	return b.String()
+}
+
+func cleanXMLText(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r':
+			return r
+		case r >= 0x20 && r <= 0xD7FF:
+			return r
+		case r >= 0xE000 && r <= 0xFFFD:
+			return r
+		case r >= 0x10000 && r <= 0x10FFFF:
+			return r
+		default:
+			return -1
+		}
+	}, s)
 }
 
 func SheetNamesForTest(result scanner.Result) []string {

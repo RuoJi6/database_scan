@@ -26,29 +26,30 @@ const (
 var errHelp = errors.New("help requested")
 
 type Config struct {
-	Type          string
-	Host          string
-	Port          int
-	User          string
-	Password      string
-	Database      string
-	Table         string
-	Proxy         string
-	Mode          string
-	Level         detector.Level
-	Limit         int
-	SQL           string
-	Output        string
-	Fscan         string
-	FscanText     string
-	SplitOutput   bool
-	IncludeSystem bool
-	Mask          bool
-	NoColor       bool
-	NoBanner      bool
-	NoProgress    bool
-	Workers       int
-	Timeout       time.Duration
+	Type           string
+	Host           string
+	Port           int
+	User           string
+	Password       string
+	Database       string
+	Table          string
+	Proxy          string
+	Mode           string
+	Level          detector.Level
+	Limit          int
+	SQL            string
+	Output         string
+	Fscan          string
+	FscanText      string
+	SplitOutput    bool
+	IncludeSystem  bool
+	Mask           bool
+	TestConnection bool
+	NoColor        bool
+	NoBanner       bool
+	NoProgress     bool
+	Workers        int
+	Timeout        time.Duration
 }
 
 func parseArgs(args []string) (Config, error) {
@@ -74,6 +75,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.SplitOutput, "split-output", false, "with --fscan and --output, also write one .xlsx per discovered database credential")
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
+	fs.BoolVar(&cfg.TestConnection, "test-connection", false, "test database connection, including proxy when --proxy is set, then exit")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
 	fs.BoolVar(&cfg.NoBanner, "no-banner", false, "disable startup banner")
 	fs.BoolVar(&cfg.NoProgress, "no-progress", false, "disable scan progress output")
@@ -198,6 +200,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	helpFlag(w, flagName("--host"), "目标地址；也支持把 host:port 作为位置参数")
 	helpFlag(w, flagName("--port"), "目标端口，不填时使用数据库默认端口")
 	helpFlag(w, flagName("--proxy"), "代理地址：socks5://... 或 http://...")
+	helpFlag(w, flagName("--test-connection"), "只测试数据库连接；设置 --proxy 时同时验证代理链路")
 	fmt.Fprintf(w, "\n%s\n", section("Auth"))
 	helpFlag(w, flagName("--user"), "数据库用户名")
 	helpFlag(w, flagName("--password"), "数据库密码；不填时隐藏交互输入")
