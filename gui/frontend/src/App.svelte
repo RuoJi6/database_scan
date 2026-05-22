@@ -215,6 +215,7 @@
   $: currentTables = currentState.Result?.Tables ?? [];
   $: currentRisk = riskTotals(currentTables);
   $: currentEvidence = evidenceFieldsFor(currentTables);
+  $: outputPath = currentState.Outputs?.[0] || selectedTask?.Request.Output || '';
   $: showSQLTab = shouldShowSQLTab(selectedTask);
   $: if (activeTab === 'sql' && !showSQLTab) activeTab = 'hits';
   $: filteredTables = filterTables(currentTables, dataQuery, fieldQuery, relation, riskFilter);
@@ -612,10 +613,13 @@
       const manualError = validateManualTargets();
       if (manualError) return manualError;
       if (!next.Fscan.trim() && !next.FscanText.trim()) return '请选择 fscan 结果文件或填写手工目标';
+      if (next.SplitOutput && !next.Output.trim()) return '按目标拆分 Excel 需要先填写输出文件路径';
       return '';
     }
     const connectionError = validateConnection(next);
     if (connectionError) return connectionError;
+    if (!next.Limit || next.Limit <= 0) return '样例条数必须大于 0';
+    if (!next.Workers || next.Workers <= 0) return '并发数必须大于 0';
     if (draftKind === 'sql' && !next.SQL.trim()) return '请填写 SQL 语句';
     return '';
   }
@@ -1357,7 +1361,11 @@
             <div><span>创建时间</span><strong>{formatTime(selectedTask.CreatedAt)}</strong></div>
             <div><span>更新时间</span><strong>{formatTime(selectedTask.UpdatedAt)}</strong></div>
             <div><span>扫描模式</span><strong>{modeLabel(selectedTask.Request.Mode)}</strong></div>
-            <div><span>输出文件</span><strong>{currentState.Outputs?.[0] || selectedTask.Request.Output || '-'}</strong></div>
+            <div class="output-info">
+              <span>输出文件</span>
+              <strong>{outputPath || '-'}</strong>
+              {#if outputPath}<button on:click={() => openOutput(outputPath)}>打开目录</button>{/if}
+            </div>
           </section>
         </div>
 

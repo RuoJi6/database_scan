@@ -818,6 +818,25 @@ label span,
   white-space: nowrap;
 }
 
+.task-info-panel .output-info {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.task-info-panel .output-info span {
+  grid-column: 1 / -1;
+}
+
+.task-info-panel .output-info strong {
+  min-width: 0;
+}
+
+.task-info-panel .output-info button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .result-panel {
   min-height: 500px;
   position: relative;
