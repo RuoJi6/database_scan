@@ -10,6 +10,14 @@ export function ChooseOutputPath() {
   return window['go']['main']['App']['ChooseOutputPath']();
 }
 
+export function CreateTask(arg1) {
+  return window['go']['main']['App']['CreateTask'](arg1);
+}
+
+export function DeleteTask(arg1) {
+  return window['go']['main']['App']['DeleteTask'](arg1);
+}
+
 export function GetDefaults() {
   return window['go']['main']['App']['GetDefaults']();
 }
@@ -20,6 +28,22 @@ export function GetScanState(arg1) {
 
 export function GetSupportedDatabaseTypes() {
   return window['go']['main']['App']['GetSupportedDatabaseTypes']();
+}
+
+export function GetTask(arg1) {
+  return window['go']['main']['App']['GetTask'](arg1);
+}
+
+export function GetTaskState(arg1) {
+  return window['go']['main']['App']['GetTaskState'](arg1);
+}
+
+export function GetVaultStatus() {
+  return window['go']['main']['App']['GetVaultStatus']();
+}
+
+export function ListTasks() {
+  return window['go']['main']['App']['ListTasks']();
 }
 
 export function OpenOutputFolder(arg1) {
@@ -38,14 +62,42 @@ export function RunCustomSQL(arg1) {
   return window['go']['main']['App']['RunCustomSQL'](arg1);
 }
 
+export function RunTaskSQL(arg1) {
+  return window['go']['main']['App']['RunTaskSQL'](arg1);
+}
+
+export function ResetVault() {
+  return window['go']['main']['App']['ResetVault']();
+}
+
+export function SetupVault(arg1) {
+  return window['go']['main']['App']['SetupVault'](arg1);
+}
+
 export function StartScan(arg1) {
   return window['go']['main']['App']['StartScan'](arg1);
+}
+
+export function StartTask(arg1) {
+  return window['go']['main']['App']['StartTask'](arg1);
 }
 
 export function StopScan(arg1) {
   return window['go']['main']['App']['StopScan'](arg1);
 }
 
+export function StopTask(arg1) {
+  return window['go']['main']['App']['StopTask'](arg1);
+}
+
 export function TestConnection(arg1) {
   return window['go']['main']['App']['TestConnection'](arg1);
+}
+
+export function UnlockVault(arg1) {
+  return window['go']['main']['App']['UnlockVault'](arg1);
+}
+
+export function UpdateTask(arg1) {
+  return window['go']['main']['App']['UpdateTask'](arg1);
 }

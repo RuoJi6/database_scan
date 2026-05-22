@@ -3,17 +3,28 @@
   import {
     ChooseFscanFile,
     ChooseOutputPath,
+    CreateTask,
+    DeleteTask,
     GetDefaults,
-    GetScanState,
     GetSupportedDatabaseTypes,
+    GetTask,
+    GetVaultStatus,
+    ListTasks,
     OpenOutputFolder,
     ParseFscanFile,
     ParseFscanText,
-    RunCustomSQL,
-    StartScan,
-    StopScan,
-    TestConnection
+    ResetVault,
+    SetupVault,
+    StartTask,
+    StopTask,
+    TestConnection,
+    UnlockVault,
+    UpdateTask
   } from '../wailsjs/go/main/App.js';
+
+  type TaskKind = 'single' | 'fscan' | 'sql';
+  type ViewMode = 'overview' | 'wizard' | 'detail';
+  type DetailTab = 'hits' | 'fields' | 'targets' | 'sql' | 'samples' | 'logs';
 
   type ScanRequest = {
     Type: string;
@@ -39,10 +50,8 @@
   };
 
   type FieldResult = { Name: string; Kinds: string[]; Level: string; Mode: string; Total: number };
+  type EvidenceField = FieldResult & { Database: string; TableName: string; Table: TableResult };
   type RowSample = { Values: Record<string, string> };
-  type DisplaySampleRow = { Table: TableResult; Values: Record<string, string> };
-  type SampleGroup = { Table: TableResult; Headers: string[]; Rows: DisplaySampleRow[] };
-  type EvidenceField = FieldResult & { TableLabel: string; Database: string };
   type TableResult = {
     Database: string;
     Schema: string;
@@ -54,19 +63,6 @@
   };
   type LogEntry = { Time: string; Level: string; Message: string };
   type SQLResult = { Columns: string[]; Rows: string[][]; Total: number; Shown: number; Affected: number; IsQuery: boolean };
-  type ConnectionTestResult = {
-    Success: boolean;
-    Message: string;
-    Type: string;
-    Host: string;
-    Port: number;
-    Database: string;
-    User: string;
-    Proxy: string;
-    Version: string;
-    ResolvedAddr: string;
-    ServerTime: string;
-  };
   type ScanState = {
     JobID: string;
     Status: string;
@@ -82,7 +78,37 @@
     StartedAt: string;
     FinishedAt: string;
   };
+  type GUITask = {
+    ID: string;
+    Name: string;
+    Description: string;
+    Kind: TaskKind;
+    Status: string;
+    Progress: number;
+    Message: string;
+    TargetLabel: string;
+    Request: ScanRequest;
+    State: ScanState;
+    CreatedAt: string;
+    UpdatedAt: string;
+    StartedAt: string;
+    FinishedAt: string;
+  };
+  type VaultStatus = { Initialized: boolean; Unlocked: boolean; Path: string };
   type FscanPreview = { Total: number; Targets: Array<{ Type: string; Host: string; Port: number; User: string; Line: number; Raw: string; Password: boolean }> };
+  type ConnectionTestResult = {
+    Success: boolean;
+    Message: string;
+    Type: string;
+    Host: string;
+    Port: number;
+    Database: string;
+    User: string;
+    Proxy: string;
+    Version: string;
+    ResolvedAddr: string;
+    ServerTime: string;
+  };
   type ManualTarget = {
     ID: number;
     Type: string;
@@ -118,9 +144,9 @@
 
   const emptyState: ScanState = {
     JobID: '',
-    Status: 'idle',
+    Status: 'draft',
     Progress: 0,
-    Message: '等待扫描任务',
+    Message: '等待配置任务',
     TargetLabel: '',
     Request: fallbackDefaults,
     Result: { Tables: [], Errors: [] },
@@ -131,329 +157,323 @@
     FinishedAt: ''
   };
 
-  let activePage: 'single' | 'fscan' | 'sql' = 'single';
-  let request: ScanRequest = { ...fallbackDefaults };
-  let state: ScanState = emptyState;
-  let dbTypes = [
-    'mysql', 'mariadb', 'tidb', 'oceanbase', 'polardb-mysql', 'doris', 'starrocks', 'gbase-mysql',
-    'mssql',
-    'postgres', 'opengauss', 'gaussdb', 'kingbase', 'highgo', 'polardb-postgres',
-    'oracle',
-    'redis'
-  ];
-  let selectedTableIndex = -1;
-  let pollTimer: number | undefined;
-  let formError = '';
-  let fscanPreview: FscanPreview = { Total: 0, Targets: [] };
-  let manualTargetSeq = 1;
-  let manualTargets: ManualTarget[] = [];
-  let sqlResult: SQLResult | undefined;
-  let showPassword = false;
-  let sampleValueQuery = '';
-  let sampleFieldQuery = '';
-  let sampleSearchOp: 'and' | 'or' | 'not' = 'and';
-  let resultPanelHeight = 260;
-  let resizingResultPanel = false;
-  let evidencePanelHeight = 540;
-  let resizingEvidencePanel = false;
-  let testingConnection = false;
-  let connectionTest: ConnectionTestResult | undefined;
-
   const defaultPorts: Record<string, number> = {
     mysql: 3306,
     mariadb: 3306,
     tidb: 3306,
     oceanbase: 3306,
-    'oceanbase-mysql': 3306,
     'polardb-mysql': 3306,
     doris: 3306,
     starrocks: 3306,
     'gbase-mysql': 3306,
+    mssql: 1433,
     postgres: 5432,
-    postgresql: 5432,
     opengauss: 5432,
     gaussdb: 5432,
     kingbase: 5432,
-    kingbasees: 5432,
     highgo: 5432,
     'polardb-postgres': 5432,
-    mssql: 1433,
-    sqlserver: 1433,
     oracle: 1521,
-    'go-ora': 1521,
     redis: 6379
   };
 
-  manualTargets = [createManualTarget()];
+  let vaultStatus: VaultStatus = { Initialized: false, Unlocked: false, Path: '' };
+  let password = '';
+  let confirmPassword = '';
+  let authError = '';
+  let loading = true;
+  let viewMode: ViewMode = 'overview';
+  let tasks: GUITask[] = [];
+  let selectedTask: GUITask | undefined;
+  let taskSearch = '';
+  let defaults: ScanRequest = { ...fallbackDefaults };
+  let dbTypes = Object.keys(defaultPorts);
+  let wizardStep = 1;
+  let wizardEditingID = '';
+  let draftName = '';
+  let draftDescription = '';
+  let draftKind: TaskKind = 'single';
+  let draftRequest: ScanRequest = { ...fallbackDefaults };
+  let wizardError = '';
+  let formError = '';
+  let activeTab: DetailTab = 'hits';
+  let selectedEvidence: EvidenceField | undefined;
+  let dataQuery = '';
+  let fieldQuery = '';
+  let relation: 'and' | 'or' | 'not' = 'and';
+  let riskFilter = 'all';
+  let showPassword = false;
+  let manualSeq = 1;
+  let manualTargets: ManualTarget[] = [createManualTarget()];
+  let fscanPreview: FscanPreview = { Total: 0, Targets: [] };
+  let connectionTest: ConnectionTestResult | undefined;
+  let testingConnection = false;
+  let manualTestingIndex = -1;
+  let pollTimer: number | undefined;
 
-  $: tables = state.Result?.Tables ?? [];
-  $: selectedTable = selectedTableIndex >= 0 ? tables[selectedTableIndex] : undefined;
-  $: sampleScopeTables = selectedTable ? [selectedTable] : tables;
-  $: sampleGroups = sampleGroupsFor(sampleScopeTables);
-  $: filteredSampleGroups = filterSampleGroups(sampleGroups, sampleValueQuery, sampleFieldQuery, sampleSearchOp);
-  $: sampleRowsCount = sampleGroups.reduce((count, group) => count + group.Rows.length, 0);
-  $: filteredSampleRowsCount = filteredSampleGroups.reduce((count, group) => count + group.Rows.length, 0);
-  $: globalEvidenceFields = evidenceFieldsFor(tables);
-  $: isRunning = state.Status === 'running';
-  $: statusText = statusLabel(state.Status);
-  $: risk = riskTotals(tables);
-  $: currentTargetLabel = targetLabelForCurrentPage();
+  $: currentState = selectedTask?.State ?? emptyState;
+  $: currentTables = currentState.Result?.Tables ?? [];
+  $: currentRisk = riskTotals(currentTables);
+  $: currentEvidence = evidenceFieldsFor(currentTables);
+  $: showSQLTab = shouldShowSQLTab(selectedTask);
+  $: if (activeTab === 'sql' && !showSQLTab) activeTab = 'hits';
+  $: filteredTables = filterTables(currentTables, dataQuery, fieldQuery, relation, riskFilter);
+  $: sampleRows = sampleRowsFor(filteredTables.length ? filteredTables : currentTables);
+  $: filteredTasks = tasks.filter((task) => {
+    const query = taskSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [task.Name, task.Description, kindLabel(task.Kind), task.TargetLabel, task.Message].join(' ').toLowerCase().includes(query);
+  });
+  $: boardStats = taskStats(tasks);
 
   onMount(async () => {
-    if (hasWailsRuntime()) {
-      request = normalizeGuiDefaults({ ...fallbackDefaults, ...(await GetDefaults()) });
+    if (!hasWailsRuntime()) {
+      defaults = { ...fallbackDefaults };
+      vaultStatus = { Initialized: true, Unlocked: true, Path: 'browser-preview' };
+      tasks = [demoTask('completed'), demoTask('draft')];
+      selectedTask = tasks[0];
+      loading = false;
+      return;
+    }
+    try {
+      defaults = normalizeDefaults({ ...fallbackDefaults, ...(await GetDefaults()) });
+      draftRequest = { ...defaults };
       dbTypes = await GetSupportedDatabaseTypes();
-    } else {
-      state = browserDemoState('idle');
+      vaultStatus = await GetVaultStatus();
+      if (vaultStatus.Unlocked) await loadTasks();
+    } catch (error) {
+      authError = normalizeError(error);
+    } finally {
+      loading = false;
     }
   });
 
-  onDestroy(() => {
-    stopPolling();
-  });
+  onDestroy(() => stopPolling());
 
   function hasWailsRuntime() {
     return Boolean((window as any).go?.main?.App);
   }
 
-  function beginResizeResultPanel(event: PointerEvent) {
-    resizingResultPanel = true;
-    event.preventDefault();
-  }
-
-  function beginResizeEvidencePanel(event: PointerEvent) {
-    resizingEvidencePanel = true;
-    event.preventDefault();
-  }
-
-  function resizeResultPanel(event: PointerEvent) {
-    if (resizingResultPanel) {
-      const stage = document.querySelector('.center-stage')?.getBoundingClientRect();
-      if (!stage) return;
-      const nextHeight = Math.round(event.clientY - stage.top - 86 - 86 - 20);
-      resultPanelHeight = Math.max(150, Math.min(520, nextHeight));
+  async function setupVault() {
+    authError = '';
+    if (password.length < 6) {
+      authError = '启动密码至少 6 位';
       return;
     }
-    if (resizingEvidencePanel) {
-      const rail = document.querySelector('.right-rail')?.getBoundingClientRect();
-      if (!rail) return;
-      const nextHeight = Math.round(event.clientY - rail.top);
-      evidencePanelHeight = Math.max(160, Math.min(Math.max(180, rail.height - 120), nextHeight));
-    }
-  }
-
-  function stopResizeResultPanel() {
-    resizingResultPanel = false;
-    resizingEvidencePanel = false;
-  }
-
-  async function startScan() {
-    formError = '';
-    sqlResult = undefined;
-    selectedTableIndex = -1;
-    const next = requestForPage();
-    const validationError = validateRequest(next, activePage);
-    if (validationError) {
-      formError = validationError;
+    if (password !== confirmPassword) {
+      authError = '两次输入的密码不一致';
       return;
     }
-    if (!hasWailsRuntime()) {
-      state = browserDemoState('running');
-      window.setTimeout(() => (state = browserDemoState('completed')), 900);
+    vaultStatus = await SetupVault(password);
+    password = '';
+    confirmPassword = '';
+    await loadTasks();
+  }
+
+  async function unlockVault() {
+    authError = '';
+    if (!password) {
+      authError = '请输入启动密码';
       return;
     }
     try {
-      state = await StartScan(next);
-      startPolling();
+      vaultStatus = await UnlockVault(password);
+      password = '';
+      await loadTasks();
     } catch (error) {
-      formError = normalizeError(error);
+      authError = normalizeError(error);
     }
   }
 
-  async function stopScan() {
+  async function resetVault() {
+    authError = '';
     if (!hasWailsRuntime()) {
-      state = browserDemoState('stopped');
+      tasks = [];
+      vaultStatus = { Initialized: false, Unlocked: false, Path: 'browser-preview' };
       return;
     }
-    state = await StopScan(state.JobID);
-    stopPolling();
+    vaultStatus = await ResetVault();
+    tasks = [];
+    selectedTask = undefined;
+    password = '';
+    confirmPassword = '';
   }
 
-  async function runSQL() {
-    formError = '';
-    sqlResult = undefined;
-    const next = requestForPage();
-    const validationError = validateRequest(next, 'sql');
-    if (validationError) {
-      formError = validationError;
-      return;
-    }
-    if (!hasWailsRuntime()) {
-      sqlResult = {
-        Columns: ['id', 'email', 'phone'],
-        Rows: [['1', 'audit@example.internal', '13800138000']],
-        Total: 1,
-        Shown: 1,
-        Affected: 0,
-        IsQuery: true
-      };
-      return;
-    }
-    try {
-      sqlResult = await RunCustomSQL(next);
-    } catch (error) {
-      formError = normalizeError(error);
-    }
-  }
-
-  async function testCurrentConnection() {
-    formError = '';
-    connectionTest = undefined;
-    const next = connectionRequestFrom(request);
-    const validationError = validateRequest(next, activePage === 'sql' ? 'sql' : 'single');
-    if (validationError && !validationError.includes('SQL 原文')) {
-      formError = validationError;
-      return;
-    }
-    await runConnectionTest(next);
-  }
-
-  async function testManualTarget(index: number) {
-    formError = '';
-    connectionTest = undefined;
-    const target = manualTargets[index];
-    if (!target) return;
-    const rowError = validateOneManualTarget(target, index + 1);
-    if (rowError) {
-      formError = rowError;
-      return;
-    }
-    await runConnectionTest(connectionRequestFrom({
-      ...request,
-      Type: target.Type,
-      Host: target.Host,
-      Port: Number(target.Port),
-      User: target.Type === 'redis' ? '' : target.User,
-      Password: target.Password
-    }));
-  }
-
-  async function runConnectionTest(next: ScanRequest) {
-    testingConnection = true;
-    try {
-      if (!hasWailsRuntime()) {
-        connectionTest = {
-          Success: true,
-          Message: next.Proxy ? '浏览器预览：代理连接测试通过' : '浏览器预览：连接测试通过',
-          Type: next.Type,
-          Host: next.Host,
-          Port: next.Port,
-          Database: next.Database || '-',
-          User: next.User || '-',
-          Proxy: next.Proxy || '',
-          Version: 'preview',
-          ResolvedAddr: next.Host,
-          ServerTime: '-'
-        };
-        return;
-      }
-      connectionTest = await TestConnection(next);
-    } catch (error) {
-      formError = normalizeError(error);
-    } finally {
-      testingConnection = false;
-    }
-  }
-
-  async function chooseFscanFile() {
+  async function loadTasks() {
     if (!hasWailsRuntime()) return;
-    const path = await ChooseFscanFile();
-    if (path) {
-      request.Fscan = path;
-      await parseFscan();
-    }
+    tasks = await ListTasks();
+    selectedTask = selectedTask ? tasks.find((task) => task.ID === selectedTask?.ID) : tasks[0];
+    startPollingIfNeeded();
   }
 
-  async function chooseOutputPath() {
-    if (!hasWailsRuntime()) {
-      request.Output = '/tmp/database_scan_report.xlsx';
-      return;
-    }
-    const path = await ChooseOutputPath();
-    if (path) request.Output = path;
-  }
-
-  async function parseFscan() {
-    formError = '';
+  function openNewTask() {
+    wizardEditingID = '';
+    draftName = '';
+    draftDescription = '';
+    draftKind = 'single';
+    draftRequest = { ...defaults };
+    manualTargets = [createManualTarget()];
     fscanPreview = { Total: 0, Targets: [] };
-    if (hasManualTargetInput()) {
-      await parseManualTargets();
-      return;
+    wizardStep = 1;
+    wizardError = '';
+    formError = '';
+    viewMode = 'wizard';
+  }
+
+  function setDraftKind(kind: string) {
+    draftKind = (['single', 'fscan', 'sql'].includes(kind) ? kind : 'single') as TaskKind;
+  }
+
+  function setDetailTab(tab: string) {
+    activeTab = (['hits', 'fields', 'targets', 'sql', 'samples', 'logs'].includes(tab) ? tab : 'hits') as DetailTab;
+    if (activeTab === 'sql' && !showSQLTab) activeTab = 'hits';
+    if (activeTab !== 'fields') selectedEvidence = undefined;
+  }
+
+  function editTask(task: GUITask) {
+    wizardEditingID = task.ID;
+    draftName = task.Name;
+    draftDescription = task.Description;
+    draftKind = task.Kind;
+    draftRequest = { ...defaults, ...task.Request };
+    manualTargets = manualTargetsFromText(draftRequest.FscanText);
+    fscanPreview = { Total: 0, Targets: [] };
+    wizardStep = 1;
+    wizardError = '';
+    formError = '';
+    viewMode = 'wizard';
+  }
+
+  function viewTask(task: GUITask) {
+    selectedTask = task;
+    activeTab = shouldShowSQLTab(task) && task.Kind === 'sql' ? 'sql' : 'hits';
+    selectedEvidence = undefined;
+    viewMode = 'detail';
+  }
+
+  function nextWizardStep() {
+    wizardError = validateWizardStep(wizardStep);
+    if (wizardError) return;
+    wizardStep = Math.min(4, wizardStep + 1);
+  }
+
+  function prevWizardStep() {
+    wizardError = '';
+    wizardStep = Math.max(1, wizardStep - 1);
+  }
+
+  async function saveTask() {
+    wizardError = validateWizardStep(4) || validateRequestForKind();
+    if (wizardError) return;
+    const request = requestForKind();
+    try {
+      let task: GUITask;
+      if (!hasWailsRuntime()) {
+        task = {
+          ID: wizardEditingID || `preview-${Date.now()}`,
+          Name: draftName.trim(),
+          Description: draftDescription.trim(),
+          Kind: draftKind,
+          Status: 'draft',
+          Progress: 0,
+          Message: '浏览器预览：任务已保存',
+          TargetLabel: targetLabel(request, draftKind),
+          Request: request,
+          State: { ...emptyState, Request: request, Message: '浏览器预览：任务已保存' },
+          CreatedAt: new Date().toISOString(),
+          UpdatedAt: new Date().toISOString(),
+          StartedAt: '',
+          FinishedAt: ''
+        };
+        tasks = wizardEditingID ? tasks.map((item) => (item.ID === wizardEditingID ? task : item)) : [task, ...tasks];
+      } else if (wizardEditingID) {
+        task = await UpdateTask({ ID: wizardEditingID, Name: draftName, Description: draftDescription, Kind: draftKind, Request: request });
+        await loadTasks();
+      } else {
+        task = await CreateTask({ Name: draftName, Description: draftDescription, Kind: draftKind, Request: request });
+        await loadTasks();
+      }
+      selectedTask = task;
+      activeTab = draftKind === 'sql' ? 'sql' : 'hits';
+      viewMode = 'detail';
+    } catch (error) {
+      wizardError = normalizeError(error);
     }
-    if (!request.Fscan) return;
+  }
+
+  async function startTask(task = selectedTask) {
+    if (!task) return;
+    formError = '';
     if (!hasWailsRuntime()) {
-      fscanPreview = {
-        Total: 2,
-        Targets: [
-          { Type: 'mysql', Host: '10.211.55.16', Port: 3306, User: 'root', Line: 1, Raw: 'mysql 10.211.55.16:3306 root:pass', Password: true },
-          { Type: 'redis', Host: '10.211.55.16', Port: 6379, User: '', Line: 2, Raw: 'redis 10.211.55.16:6379 pass', Password: true }
-        ]
-      };
+      const running = { ...task, Status: 'running', Progress: 42, Message: '浏览器预览：任务运行中', State: demoState('running', task.Request) };
+      replaceLocalTask(running);
+      selectedTask = running;
+      window.setTimeout(() => {
+        const completed = { ...running, Status: 'completed', Progress: 100, Message: '浏览器预览：任务完成', State: demoState('completed', task.Request) };
+        replaceLocalTask(completed);
+        selectedTask = completed;
+      }, 900);
       return;
     }
     try {
-      fscanPreview = await ParseFscanFile(request.Fscan);
+      const next = await StartTask(task.ID);
+      replaceLocalTask(next);
+      selectedTask = next;
+      startPollingIfNeeded();
     } catch (error) {
       formError = normalizeError(error);
     }
   }
 
-  async function parseManualTargets() {
-    formError = '';
-    fscanPreview = { Total: 0, Targets: [] };
-    const validationError = validateManualTargets();
-    if (validationError) {
-      formError = validationError;
-      return;
-    }
-    const text = manualTargetsText();
-    request.FscanText = text;
-    request.Fscan = '';
-    if (!text) return;
+  async function stopTask(task = selectedTask) {
+    if (!task) return;
     if (!hasWailsRuntime()) {
-      fscanPreview = {
-        Total: manualTargets.filter(manualTargetHasInput).length,
-        Targets: manualTargets.filter(manualTargetHasInput).map((target, index) => ({
-          Type: target.Type,
-          Host: target.Host,
-          Port: Number(target.Port),
-          User: target.Type === 'redis' ? '' : target.User,
-          Line: index + 1,
-          Raw: manualTargetLine(target),
-          Password: Boolean(target.Password)
-        }))
-      };
+      const stopped = { ...task, Status: 'stopped', Message: '浏览器预览：已停止', State: { ...task.State, Status: 'stopped', Message: '浏览器预览：已停止' } };
+      replaceLocalTask(stopped);
+      selectedTask = stopped;
       return;
     }
-    try {
-      fscanPreview = await ParseFscanText(text);
-    } catch (error) {
-      formError = normalizeError(error);
+    const next = await StopTask(task.ID);
+    replaceLocalTask(next);
+    selectedTask = next;
+  }
+
+  async function deleteTask(task: GUITask) {
+    if (!hasWailsRuntime()) {
+      tasks = tasks.filter((item) => item.ID !== task.ID);
+      if (selectedTask?.ID === task.ID) selectedTask = tasks[0];
+      viewMode = 'overview';
+      return;
     }
+    await DeleteTask(task.ID);
+    await loadTasks();
+    viewMode = 'overview';
   }
 
-  async function openFirstOutput() {
-    const first = state.Outputs?.[0];
-    if (first && hasWailsRuntime()) await OpenOutputFolder(first);
+  async function refreshSelectedTask() {
+    if (!selectedTask || !hasWailsRuntime()) return;
+    const next = await GetTask(selectedTask.ID);
+    replaceLocalTask(next);
+    selectedTask = next;
   }
 
-  function startPolling() {
+  function startPollingIfNeeded() {
+    if (!hasWailsRuntime()) return;
     stopPolling();
+    if (!tasks.some((task) => task.Status === 'running')) return;
     pollTimer = window.setInterval(async () => {
-      const next = await GetScanState(state.JobID);
-      state = next;
-      if (next.Status !== 'running') stopPolling();
-    }, 700);
+      const running = tasks.filter((task) => task.Status === 'running');
+      for (const task of running) {
+        try {
+          const next = await GetTask(task.ID);
+          replaceLocalTask(next);
+          if (selectedTask?.ID === next.ID) selectedTask = next;
+        } catch {
+          // The task may have been deleted in another window.
+        }
+      }
+      if (!tasks.some((task) => task.Status === 'running')) stopPolling();
+    }, 900);
   }
 
   function stopPolling() {
@@ -461,9 +481,109 @@
     pollTimer = undefined;
   }
 
-  function requestForPage(): ScanRequest {
-    const next = { ...request };
-    if (activePage === 'fscan') {
+  function replaceLocalTask(task: GUITask) {
+    tasks = tasks.some((item) => item.ID === task.ID) ? tasks.map((item) => (item.ID === task.ID ? task : item)) : [task, ...tasks];
+  }
+
+  async function chooseFscanFile() {
+    if (!hasWailsRuntime()) {
+      draftRequest.Fscan = '/tmp/fscan_result.txt';
+      fscanPreview = demoFscanPreview();
+      return;
+    }
+    const path = await ChooseFscanFile();
+    if (!path) return;
+    draftRequest.Fscan = path;
+    draftRequest.FscanText = '';
+    fscanPreview = await ParseFscanFile(path);
+  }
+
+  async function parseManualTargets() {
+    const text = manualTargetsText();
+    draftRequest.FscanText = text;
+    if (!text) {
+      fscanPreview = { Total: 0, Targets: [] };
+      return;
+    }
+    if (!hasWailsRuntime()) {
+      fscanPreview = demoFscanPreview(manualTargets.filter(manualTargetHasInput).length);
+      return;
+    }
+    fscanPreview = await ParseFscanText(text);
+    draftRequest.Fscan = '';
+  }
+
+  async function chooseOutputPath() {
+    if (!hasWailsRuntime()) {
+      draftRequest.Output = '/tmp/database_scan_report.xlsx';
+      return;
+    }
+    const path = await ChooseOutputPath();
+    if (path) draftRequest.Output = path;
+  }
+
+  async function openOutput(path: string) {
+    if (path && hasWailsRuntime()) await OpenOutputFolder(path);
+  }
+
+  async function testConnectionFromDraft() {
+    formError = '';
+    connectionTest = undefined;
+    const request = { ...draftRequest, Fscan: '', FscanText: '', SQL: '' };
+    const error = validateConnection(request);
+    if (error) {
+      formError = error;
+      return;
+    }
+    testingConnection = true;
+    try {
+      connectionTest = hasWailsRuntime() ? await TestConnection(request) : demoConnection(request);
+    } catch (error) {
+      formError = normalizeError(error);
+    } finally {
+      testingConnection = false;
+    }
+  }
+
+  async function testManualTargetConnection(index: number) {
+    formError = '';
+    connectionTest = undefined;
+    const target = manualTargets[index];
+    if (!target) return;
+    const error = validateManualTarget(target, index + 1);
+    if (error) {
+      formError = error;
+      return;
+    }
+    const request: ScanRequest = {
+      ...defaults,
+      Type: target.Type,
+      Host: target.Host,
+      Port: Number(target.Port),
+      User: target.Type === 'redis' ? '' : target.User,
+      Password: target.Password,
+      Proxy: draftRequest.Proxy,
+      Fscan: '',
+      FscanText: '',
+      SQL: '',
+      Output: '',
+      SplitOutput: false
+    };
+    testingConnection = true;
+    manualTestingIndex = index;
+    try {
+      connectionTest = hasWailsRuntime() ? await TestConnection(request) : demoConnection(request);
+    } catch (error) {
+      formError = normalizeError(error);
+    } finally {
+      testingConnection = false;
+      manualTestingIndex = -1;
+    }
+  }
+
+  function requestForKind() {
+    const next = { ...draftRequest };
+    if (draftKind === 'fscan') {
       next.Type = '';
       next.Host = '';
       next.User = '';
@@ -476,91 +596,81 @@
       next.FscanText = '';
       next.SplitOutput = false;
     }
-    if (activePage !== 'sql') next.SQL = '';
+    if (draftKind !== 'sql') next.SQL = '';
     return next;
   }
 
-  function connectionRequestFrom(source: ScanRequest): ScanRequest {
-    return {
-      ...source,
-      Fscan: '',
-      FscanText: '',
-      SQL: '',
-      Output: '',
-      SplitOutput: false
-    };
+  function validateWizardStep(step: number) {
+    if (step === 1 && !draftName.trim()) return '请先填写任务名称';
+    if (step === 3) return validateRequestForKind();
+    return '';
   }
 
-  function validateRequest(next: ScanRequest, page: 'single' | 'fscan' | 'sql') {
-    if (page === 'fscan') {
+  function validateRequestForKind() {
+    const next = requestForKind();
+    if (draftKind === 'fscan') {
       const manualError = validateManualTargets();
       if (manualError) return manualError;
-      if (!next.Fscan?.trim() && !next.FscanText?.trim()) return '请选择 fscan 结果文件或填写批量目标清单';
-      if (next.SplitOutput && !next.Output?.trim()) return '按目标拆分 Excel 需要先填写输出文件路径';
+      if (!next.Fscan.trim() && !next.FscanText.trim()) return '请选择 fscan 结果文件或填写手工目标';
       return '';
     }
+    const connectionError = validateConnection(next);
+    if (connectionError) return connectionError;
+    if (draftKind === 'sql' && !next.SQL.trim()) return '请填写 SQL 语句';
+    return '';
+  }
+
+  function validateConnection(next: ScanRequest) {
     if (!next.Type?.trim()) return '请选择数据库类型';
     if (!next.Host?.trim()) return '请填写 Host';
     if (next.Type !== 'redis' && !next.User?.trim()) return '请填写账号；Redis 可留空';
     if (next.Table?.trim() && !next.Database?.trim()) return '指定表时必须同时填写指定库';
-    if (!next.Limit || next.Limit <= 0) return '样例 limit 必须大于 0';
-    if (!next.Workers || next.Workers <= 0) return '并发 workers 必须大于 0';
-    if (page === 'sql' && !next.SQL?.trim()) return '请填写 SQL 原文';
     return '';
   }
 
-  function normalizeError(error: unknown) {
-    const message = String(error);
-    if (message.includes('type, host and user are required')) return '请检查数据库类型、Host 和账号是否已填写；Redis 账号可以留空。';
-    if (message.includes('sql is required')) return '请填写 SQL 原文。';
-    if (message.includes('split-output requires output')) return '按目标拆分 Excel 需要先填写输出文件路径。';
-    if (message.includes('table requires database')) return '指定表时必须同时填写指定库。';
-    return message;
-  }
-
-  function normalizeGuiDefaults(next: ScanRequest) {
-    if (!next.Host?.trim()) next.Host = fallbackDefaults.Host;
-    if (!next.Port) next.Port = fallbackDefaults.Port;
-    if (!next.Limit) next.Limit = 15;
-    return next;
-  }
-
-  function changeType() {
-    const nextPort = defaultPorts[request.Type] ?? 0;
-    request.Port = nextPort;
-    if (request.Type === 'redis') request.User = '';
-  }
-
-  function createManualTarget(type = 'mysql'): ManualTarget {
-    const dbType = type || 'mysql';
+  function createManualTarget(type = draftRequest.Type || 'mysql'): ManualTarget {
     return {
-      ID: manualTargetSeq++,
-      Type: dbType,
+      ID: manualSeq++,
+      Type: type || 'mysql',
       Host: '',
-      Port: defaultPorts[dbType] ?? 0,
-      User: dbType === 'redis' ? '' : '',
+      Port: defaultPorts[type] ?? 3306,
+      User: type === 'redis' ? '' : '',
       Password: '',
       ShowPassword: false
     };
   }
 
-  function insertManualTarget(afterIndex: number) {
-    const baseType = manualTargets[afterIndex]?.Type || manualTargets[afterIndex - 1]?.Type || 'mysql';
-    const next = createManualTarget(baseType);
-    manualTargets = [...manualTargets.slice(0, afterIndex), next, ...manualTargets.slice(afterIndex)];
+  function addManualTarget() {
+    const baseType = manualTargets[manualTargets.length - 1]?.Type || draftRequest.Type || 'mysql';
+    manualTargets = [...manualTargets, createManualTarget(baseType)];
+  }
+
+  function removeLastManualTarget() {
+    manualTargets = manualTargets.length <= 1 ? [createManualTarget()] : manualTargets.slice(0, -1);
   }
 
   function removeManualTarget(index: number) {
     if (manualTargets.length <= 1) {
-      manualTargets = [createManualTarget(manualTargets[0]?.Type || 'mysql')];
+      manualTargets = [createManualTarget()];
       fscanPreview = { Total: 0, Targets: [] };
-      request.FscanText = '';
+      draftRequest.FscanText = '';
       return;
     }
     manualTargets = manualTargets.filter((_, itemIndex) => itemIndex !== index);
   }
 
-  function changeManualTargetType(index: number) {
+  function clearManualTargets() {
+    manualTargets = [createManualTarget()];
+    fscanPreview = { Total: 0, Targets: [] };
+    draftRequest.FscanText = '';
+  }
+
+  function changeDraftType() {
+    draftRequest.Port = defaultPorts[draftRequest.Type] ?? draftRequest.Port;
+    if (draftRequest.Type === 'redis') draftRequest.User = '';
+  }
+
+  function changeManualType(index: number) {
     const target = manualTargets[index];
     if (!target) return;
     target.Port = defaultPorts[target.Type] ?? target.Port;
@@ -568,185 +678,186 @@
     manualTargets = [...manualTargets];
   }
 
-  function toggleManualTargetPassword(index: number) {
+  function updateManualPassword(index: number, event: Event) {
     const target = manualTargets[index];
+    const input = event.currentTarget as HTMLInputElement;
     if (!target) return;
-    target.ShowPassword = !target.ShowPassword;
+    target.Password = input.value;
     manualTargets = [...manualTargets];
   }
 
-  function manualTargetHasInput(target: ManualTarget) {
-    return Boolean(target.Host?.trim() || target.User?.trim() || target.Password?.trim());
+  function updateDraftPassword(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    draftRequest.Password = input.value;
   }
 
-  function hasManualTargetInput() {
-    return manualTargets.some((target) => target.Host?.trim() || target.User?.trim() || target.Password?.trim());
+  function manualTargetHasInput(target: ManualTarget) {
+    return Boolean(target.Host.trim() || target.User.trim() || target.Password.trim());
   }
 
   function validateManualTargets() {
-    const activeTargets = manualTargets.filter(manualTargetHasInput);
-    if (!activeTargets.length) return '';
-    for (const [index, target] of activeTargets.entries()) {
-      const error = validateOneManualTarget(target, index + 1);
+    const active = manualTargets.filter(manualTargetHasInput);
+    for (const [index, target] of active.entries()) {
+      const error = validateManualTarget(target, index + 1);
       if (error) return error;
     }
     return '';
   }
 
-  function validateOneManualTarget(target: ManualTarget, rowNo: number) {
-    if (!target.Type?.trim()) return `第 ${rowNo} 个目标请选择数据库类型`;
-    if (!target.Host?.trim()) return `第 ${rowNo} 个目标请填写 Host`;
+  function validateManualTarget(target: ManualTarget, rowNo: number) {
+    if (!target.Type) return `第 ${rowNo} 个目标请选择数据库类型`;
+    if (!target.Host.trim()) return `第 ${rowNo} 个目标请填写 Host`;
     if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
-    if (target.Type !== 'redis' && !target.User?.trim()) return `第 ${rowNo} 个目标请填写账号`;
+    if (target.Type !== 'redis' && !target.User.trim()) return `第 ${rowNo} 个目标请填写账号`;
     return '';
   }
 
   function manualTargetsText() {
-    const validationError = validateManualTargets();
-    if (validationError) return '';
-    return manualTargets.filter(manualTargetHasInput).map(manualTargetLine).filter(Boolean).join('\n');
+    if (validateManualTargets()) return '';
+    return manualTargets.filter(manualTargetHasInput).map(manualLine).join('\n');
   }
 
-  function manualTargetLine(target: ManualTarget) {
+  function manualLine(target: ManualTarget) {
     const host = target.Host.trim();
     const port = Number(target.Port);
-    if (!host || !port) return '';
     if (target.Type === 'redis' && !target.User.trim()) {
-      const password = target.Password.trim();
-      return password ? `${target.Type} ${host}:${port} ${password}` : `${target.Type} ${host}:${port}`;
+      return target.Password.trim() ? `${target.Type} ${host}:${port} ${target.Password.trim()}` : `${target.Type} ${host}:${port}`;
     }
     return `${target.Type} ${host}:${port} ${target.User.trim()}:${target.Password ?? ''}`;
   }
 
-  function targetLabelForCurrentPage() {
-    if (state.TargetLabel) return state.TargetLabel;
-    if (activePage === 'fscan') {
-      if (hasManualTargetInput()) return '手工多目标';
-      return request.Fscan || '未设置';
-    }
-    return request.Host || '未设置';
+  function manualTargetsFromText(text: string) {
+    if (!text.trim()) return [createManualTarget()];
+    return text.split('\n').filter(Boolean).map(() => createManualTarget());
   }
 
-  function sampleGroupsFor(items: TableResult[]): SampleGroup[] {
-    return items
-      .map((table) => ({
-        Table: table,
-        Headers: sampleHeadersForTable(table),
-        Rows: (table.Rows ?? []).map((row) => ({ Table: table, Values: row.Values ?? {} }))
-      }))
-      .filter((group) => group.Rows.length > 0);
-  }
-
-  function sampleHeadersForTable(table: TableResult) {
-    const headers: string[] = [];
-    const seen = new Set<string>();
-    const add = (column: string) => {
-      if (!seen.has(column)) {
-        seen.add(column);
-        headers.push(column);
+  function filterTables(tables: TableResult[], valueQuery: string, fieldQuery: string, op: 'and' | 'or' | 'not', risk: string) {
+    const valueNeedle = valueQuery.trim().toLowerCase();
+    const fieldNeedle = fieldQuery.trim().toLowerCase();
+    return tables.filter((table) => {
+      const fields = table.Fields ?? [];
+      const rows = table.Rows ?? [];
+      const valueMatch = !valueNeedle || rows.some((row) => Object.values(row.Values ?? {}).some((value) => String(value).toLowerCase().includes(valueNeedle)));
+      const fieldMatch = !fieldNeedle || fields.some((field) => field.Name.toLowerCase().includes(fieldNeedle));
+      const riskMatch = risk === 'all' || fields.some((field) => fieldLevel(field) === risk);
+      if (!riskMatch) return false;
+      if (valueNeedle && fieldNeedle) {
+        if (op === 'or') return valueMatch || fieldMatch;
+        if (op === 'not') return valueMatch && !fieldMatch;
+        return valueMatch && fieldMatch;
       }
-    };
-    for (const column of table.Columns ?? []) add(column);
-    for (const row of table.Rows ?? []) {
-      for (const column of Object.keys(row.Values ?? {})) add(column);
-    }
-    return headers;
+      if (valueNeedle) return op === 'not' ? !valueMatch : valueMatch;
+      if (fieldNeedle) return op === 'not' ? !fieldMatch : fieldMatch;
+      return true;
+    });
   }
 
-  function filterSampleGroups(groups: SampleGroup[], valueQuery: string, fieldQuery: string, searchOp: 'and' | 'or' | 'not') {
-    return groups
-      .map((group) => ({
-        ...group,
-        Rows: filterSampleRows(group.Rows, group.Headers, valueQuery, fieldQuery, searchOp)
+  function sampleRowsFor(tables: TableResult[]) {
+    return tables.flatMap((table) =>
+      (table.Rows ?? []).map((row) => ({
+        Table: table,
+        Values: row.Values ?? {},
+        Headers: sampleHeaders(table, row)
       }))
-      .filter((group) => group.Rows.length > 0);
+    );
   }
 
-  function fieldForSampleHeader(header: string, row?: DisplaySampleRow) {
-    const table = row?.Table ?? selectedTable;
-    return (table?.Fields ?? []).find((field) => sampleHeaderMatchesField(header, field));
+  function sampleHeaders(table: TableResult, row: RowSample) {
+    return Array.from(new Set([...(table.Columns ?? []), ...Object.keys(row.Values ?? {})]));
   }
 
-  function sampleCellClass(header: string, row?: DisplaySampleRow) {
-    const field = fieldForSampleHeader(header, row);
+  function sampleHeaderRisk(table: TableResult, header: string) {
+    const normalizedHeader = header.trim().toLowerCase();
+    const field = (table.Fields ?? []).find((field) => field.Name.trim().toLowerCase() === normalizedHeader);
     return field ? fieldLevel(field) : '';
   }
 
-  function sampleHeaderClass(header: string, table?: TableResult) {
-    const source = table ? (table.Fields ?? []) : sampleScopeTables.flatMap((item) => item.Fields ?? []);
-    const fields = source.filter((field) => sampleHeaderMatchesField(header, field));
-    if (fields.some((field) => fieldLevel(field) === 'high')) return 'high';
-    if (fields.some((field) => fieldLevel(field) === 'medium')) return 'medium';
-    if (fields.some((field) => fieldLevel(field) === 'low')) return 'low';
-    return '';
-  }
-
-  function sampleHeaderMatchesField(header: string, field: FieldResult) {
+  function sampleHeaderKinds(table: TableResult, header: string) {
     const normalizedHeader = header.trim().toLowerCase();
-    const normalizedField = field.Name.trim().toLowerCase();
-    if (normalizedHeader === normalizedField) return true;
-    if (normalizedField === 'value' && ['value', '命中类型', '敏感级别', '判断依据'].includes(normalizedHeader)) return true;
-    if (normalizedField === 'key' && ['key', 'path/field'].includes(normalizedHeader)) return true;
-    return false;
+    const field = (table.Fields ?? []).find((field) => field.Name.trim().toLowerCase() === normalizedHeader);
+    return field ? (field.Kinds ?? []).join(' / ') : '';
   }
 
-  function filterSampleRows(rows: DisplaySampleRow[], headers: string[], valueQuery: string, fieldQuery: string, searchOp: 'and' | 'or' | 'not') {
-    const valueNeedle = valueQuery.trim().toLowerCase();
-    const fieldNeedle = fieldQuery.trim().toLowerCase();
-    if (!valueNeedle && !fieldNeedle) return rows;
-    return rows.filter((row) => {
-      const valueMatch = !valueNeedle || headers.some((header) => String(row.Values?.[header] ?? '').toLowerCase().includes(valueNeedle));
-      const fieldMatch =
-        !fieldNeedle ||
-        headers.some((header) => header.toLowerCase().includes(fieldNeedle) && String(row.Values?.[header] ?? '').trim() !== '');
-      if (valueNeedle && fieldNeedle) {
-        if (searchOp === 'or') return valueMatch || fieldMatch;
-        if (searchOp === 'not') return valueMatch && !fieldMatch;
-        return valueMatch && fieldMatch;
-      }
-      if (valueNeedle) return searchOp === 'not' ? !valueMatch : valueMatch;
-      return searchOp === 'not' ? !fieldMatch : fieldMatch;
-    });
+  function evidenceFieldsFor(tables: TableResult[]): EvidenceField[] {
+    return tables.flatMap((table) => (table.Fields ?? []).map((field) => ({ ...field, Database: table.Database, TableName: tableLabel(table), Table: table })));
+  }
+
+  function selectEvidenceField(field: EvidenceField) {
+    selectedEvidence = field;
+  }
+
+  function fieldSampleValues(field: EvidenceField) {
+    return (field.Table.Rows ?? [])
+      .map((row) => sampleValueForField(row, field.Name))
+      .filter((value) => value.trim() !== '')
+      .map((value, index) => ({ Index: index + 1, Value: value }));
+  }
+
+  function sampleValueForField(row: RowSample, fieldName: string) {
+    const values = row.Values ?? {};
+    if (values[fieldName] !== undefined) return String(values[fieldName]);
+    const normalized = fieldName.trim().toLowerCase();
+    const key = Object.keys(values).find((item) => item.trim().toLowerCase() === normalized);
+    return key ? String(values[key]) : '';
+  }
+
+  function riskTotals(tables: TableResult[]) {
+    return tables.reduce(
+      (acc, table) => {
+        for (const field of table.Fields ?? []) acc[fieldLevel(field)] += 1;
+        return acc;
+      },
+      { high: 0, medium: 0, low: 0 } as Record<string, number>
+    );
+  }
+
+  function taskStats(items: GUITask[]) {
+    return {
+      total: items.length,
+      running: items.filter((task) => task.Status === 'running').length,
+      completed: items.filter((task) => task.Status === 'completed').length,
+      failed: items.filter((task) => task.Status === 'failed').length
+    };
+  }
+
+  function shouldShowSQLTab(task?: GUITask) {
+    return Boolean(task && (task.Kind === 'sql' || task.State?.SQLResult));
+  }
+
+  function detailTabs(includeSQL: boolean): Array<[DetailTab, string]> {
+    const tabs: Array<[DetailTab, string]> = [
+      ['hits', '命中结果'],
+      ['fields', '高危字段'],
+      ['targets', '批量目标']
+    ];
+    if (includeSQL) tabs.push(['sql', 'SQL 结果']);
+    tabs.push(['samples', '样例数据'], ['logs', '日志输出']);
+    return tabs;
+  }
+
+  function targetLabel(request: ScanRequest, kind: TaskKind) {
+    if (kind === 'fscan') return request.Fscan || `${request.FscanText.split('\n').filter(Boolean).length} targets`;
+    return `${request.Type || 'db'}://${request.Host || '未设置'}:${request.Port || '-'}`;
   }
 
   function tableLabel(table: TableResult) {
     return table.Schema ? `${table.Schema}.${table.Name}` : table.Name;
   }
 
-  function evidenceFieldsFor(items: TableResult[]): EvidenceField[] {
-    return items.flatMap((table) =>
-      (table.Fields ?? []).map((field) => ({
-        ...field,
-        Database: table.Database,
-        TableLabel: tableLabel(table)
-      }))
-    );
+  function statusLabel(status: string) {
+    return ({ draft: '待配置', idle: '待扫描', running: '运行中', completed: '已完成', stopped: '已停止', failed: '失败' } as Record<string, string>)[status] ?? status;
   }
 
-  function statusLabel(status: string) {
-    const labels: Record<string, string> = {
-      idle: '待扫描',
-      running: '扫描中',
-      completed: '已完成',
-      stopped: '已停止',
-      failed: '失败'
-    };
-    return labels[status] ?? status;
+  function kindLabel(kind: string) {
+    return ({ single: '单目标扫描', fscan: 'fscan 批量扫描', sql: 'SQL 语句执行' } as Record<string, string>)[kind] ?? kind;
   }
 
   function modeLabel(mode: string) {
-    const labels: Record<string, string> = {
-      'field-content': '字段名+内容',
-      'field-name': '字段名',
-      content: '内容正则',
-      all: '全部'
-    };
-    return labels[mode] ?? mode;
+    return ({ 'field-content': '字段名+内容', 'field-name': '字段名', content: '内容正则', all: '全部' } as Record<string, string>)[mode] ?? mode;
   }
 
   function levelLabel(level: string) {
-    const labels: Record<string, string> = { high: '高敏', medium: '中敏', low: '低敏', all: '全部' };
-    return labels[level] ?? level;
+    return ({ high: '高敏', medium: '中敏', low: '低敏', all: '全部' } as Record<string, string>)[level] ?? level;
   }
 
   function fieldLevel(field: FieldResult) {
@@ -757,630 +868,648 @@
     return 'low';
   }
 
-  function riskTotals(items: TableResult[]) {
-    return items.reduce(
-      (acc, table) => {
-        for (const field of table.Fields ?? []) acc[fieldLevel(field)] += 1;
-        return acc;
-      },
-      { high: 0, medium: 0, low: 0 } as Record<string, number>
-    );
+  function normalizeDefaults(next: ScanRequest) {
+    if (!next.Host) next.Host = fallbackDefaults.Host;
+    if (!next.Port) next.Port = fallbackDefaults.Port;
+    if (!next.Limit) next.Limit = fallbackDefaults.Limit;
+    if (!next.Workers) next.Workers = fallbackDefaults.Workers;
+    if (!next.Timeout) next.Timeout = fallbackDefaults.Timeout;
+    return next;
   }
 
-  function browserDemoState(status: string): ScanState {
-    const progress = status === 'completed' ? 100 : status === 'running' ? 54 : status === 'stopped' ? 31 : 0;
+  function normalizeError(error: unknown) {
+    const message = String(error).replace(/^Error:\s*/, '');
+    if (message.includes('password is incorrect')) return '启动密码不正确，或本地任务库已损坏';
+    if (message.includes('type, host and user are required')) return '请检查数据库类型、Host 和账号是否已填写；Redis 账号可以留空。';
+    if (message.includes('sql is required')) return '请填写 SQL 语句。';
+    return message;
+  }
+
+  function formatTime(value: string) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function demoTask(status: string): GUITask {
+    const request = { ...fallbackDefaults, User: 'root', Password: 'encrypted-demo', Database: 'audit_lab' };
     return {
-      ...emptyState,
+      ID: `demo-${status}`,
+      Name: status === 'completed' ? '客户数据敏感字段审计' : '新建数据库扫描任务',
+      Description: status === 'completed' ? '验证 access_tokens 与 customer_profile 中的密码、手机号、邮箱字段。' : '填写任务详情后设置扫描目标。',
+      Kind: status === 'completed' ? 'single' : 'fscan',
       Status: status,
-      Progress: progress,
-      Message: status === 'idle' ? '浏览器预览模式：Wails API 不可用' : statusLabel(status),
+      Progress: status === 'completed' ? 100 : 0,
+      Message: status === 'completed' ? '浏览器预览：任务完成' : '等待配置目标',
+      TargetLabel: targetLabel(request, 'single'),
       Request: request,
-      Outputs: status === 'completed' ? ['/tmp/database_scan_report.xlsx'] : [],
-      Result: {
-        Errors: status === 'stopped' ? ['用户停止扫描，保留已完成表结果'] : [],
-        Tables: [
-          {
-            Database: 'audit_lab',
-            Schema: '',
-            Name: 'access_tokens',
-            Total: 2,
-            Columns: ['id', 'service_name', 'secret_key', 'refresh_token', 'owner_email'],
-            Fields: [
-              { Name: 'id', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'service_name', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'secret_key', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'refresh_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'owner_email', Kinds: ['密码/密钥', '邮箱'], Level: 'high', Mode: 'field-content', Total: 2 }
-            ],
-            Rows: [
-              { Values: { id: '1', service_name: 'billing', secret_key: 'sk_live_mysql_demo_abcdef', refresh_token: 'rt_mysql_refresh_123456', owner_email: 'ops@example.internal' } },
-              { Values: { id: '2', service_name: 'crm', secret_key: 'ak_mysql_crm_abcdef', refresh_token: 'rt_mysql_refresh_654321', owner_email: 'security@example.internal' } }
-            ]
-          },
-          {
-            Database: 'audit_lab',
-            Schema: '',
-            Name: 'customer_profile',
-            Total: 2,
-            Columns: ['customer_id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'bank_card', 'api_token', 'home_address'],
-            Fields: [
-              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'bank_card', Kinds: ['银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'api_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
-            ],
-            Rows: [
-              { Values: { customer_id: '1', real_name: 'Zhang San', id_card_no: '110101199003071234', mobile_phone: '13800138000', email: 'audit@example.internal', bank_card: '6222020202021234', api_token: 'tok_live_mysql_123456', home_address: 'Beijing Road 88' } },
-              { Values: { customer_id: '2', real_name: 'Li Si', id_card_no: '310101198812121234', mobile_phone: '13900139000', email: 'risk@example.internal', bank_card: '6217001234567890', api_token: 'secret_mysql_abcdef', home_address: 'Shanghai Avenue 100' } }
-            ]
-          },
-          {
-            Database: 'audit_lab_archive',
-            Schema: '',
-            Name: 'customer_profile',
-            Total: 2,
-            Columns: ['id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'home_address'],
-            Fields: [
-              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
-            ],
-            Rows: [
-              { Values: { id: '1', real_name: 'Archive Carol', id_card_no: '110101198803033333', mobile_phone: '13700137003', email: 'archive.carol@example.internal', home_address: 'Guangzhou archive road 3' } },
-              { Values: { id: '2', real_name: 'Archive Dave', id_card_no: '110101198904044444', mobile_phone: '13600136004', email: 'archive.dave@example.internal', home_address: 'Shenzhen archive road 4' } }
-            ]
-          },
-          {
-            Database: 'audit_lab_extra',
-            Schema: '',
-            Name: 'access_tokens',
-            Total: 2,
-            Columns: ['id', 'service_name', 'secret_key', 'refresh_token', 'owner_email'],
-            Fields: [
-              { Name: 'id', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'service_name', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'secret_key', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'refresh_token', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'owner_email', Kinds: ['密码/密钥', '邮箱'], Level: 'high', Mode: 'field-content', Total: 2 }
-            ],
-            Rows: [
-              { Values: { id: '1', service_name: 'billing', secret_key: 'sk_live_extra_mysql_abcdef', refresh_token: 'rt_extra_mysql_123456', owner_email: 'billing-extra@example.internal' } },
-              { Values: { id: '2', service_name: 'ops', secret_key: 'ak_extra_mysql_ops_secret', refresh_token: 'rt_extra_mysql_654321', owner_email: 'ops-extra@example.internal' } }
-            ]
-          },
-          {
-            Database: 'audit_lab_extra',
-            Schema: '',
-            Name: 'customer_profile',
-            Total: 2,
-            Columns: ['id', 'real_name', 'id_card_no', 'mobile_phone', 'email', 'home_address'],
-            Fields: [
-              { Name: 'id_card_no', Kinds: ['身份证', '银行卡'], Level: 'high', Mode: 'field-content', Total: 2 },
-              { Name: 'mobile_phone', Kinds: ['手机号'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 },
-              { Name: 'home_address', Kinds: ['地址'], Level: 'low', Mode: 'field-content', Total: 2 }
-            ],
-            Rows: [
-              { Values: { id: '1', real_name: 'Extra Alice', id_card_no: '110101199001011111', mobile_phone: '13800138001', email: 'extra.alice@example.internal', home_address: 'Beijing test road 1' } },
-              { Values: { id: '2', real_name: 'Extra Bob', id_card_no: '110101199002022222', mobile_phone: '13900139002', email: 'extra.bob@example.internal', home_address: 'Shanghai test road 2' } }
-            ]
-          }
-        ]
-      },
-      Logs: [
-        { Time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), Level: 'info', Message: '枚举字段并启动表级扫描' },
-        { Time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), Level: 'debug', Message: 'audit_lab / audit_lab_archive / audit_lab_extra 命中多库敏感字段' }
-      ]
+      State: demoState(status, request),
+      CreatedAt: new Date().toISOString(),
+      UpdatedAt: new Date().toISOString(),
+      StartedAt: '',
+      FinishedAt: ''
     };
   }
 
-  function tableRisk(table: TableResult) {
-    const levels = (table.Fields ?? []).map(fieldLevel);
-    if (levels.includes('high')) return 'high';
-    if (levels.includes('medium')) return 'medium';
-    return levels.length ? 'low' : 'none';
+  function demoState(status: string, request: ScanRequest): ScanState {
+    const completed = status === 'completed';
+    return {
+      ...emptyState,
+      JobID: `demo-${status}`,
+      Status: status,
+      Progress: completed ? 100 : 42,
+      Message: completed ? '浏览器预览：扫描完成' : '浏览器预览：扫描中',
+      TargetLabel: targetLabel(request, 'single'),
+      Request: request,
+      Outputs: completed ? ['/tmp/database_scan_report.xlsx'] : [],
+      Logs: [
+        { Time: '10:01:03', Level: 'info', Message: '任务已提交扫描引擎' },
+        { Time: '10:01:05', Level: 'info', Message: '发现 access_tokens 命中字段' }
+      ],
+      Result: {
+        Errors: [],
+        Tables: completed
+          ? [
+              {
+                Database: 'audit_lab',
+                Schema: '',
+                Name: 'access_tokens',
+                Total: 2,
+                Columns: ['id', 'service_name', 'secret_key', 'refresh_token', 'owner_email'],
+                Fields: [
+                  { Name: 'secret_key', Kinds: ['密码/密钥'], Level: 'high', Mode: 'field-content', Total: 2 },
+                  { Name: 'refresh_token', Kinds: ['token'], Level: 'high', Mode: 'field-content', Total: 2 },
+                  { Name: 'owner_email', Kinds: ['邮箱'], Level: 'medium', Mode: 'field-content', Total: 2 }
+                ],
+                Rows: [
+                  { Values: { id: '1', service_name: 'billing', secret_key: 'sk_live_demo', refresh_token: 'rt_mysql_refresh', owner_email: 'ops@example.internal' } },
+                  { Values: { id: '2', service_name: 'crm', secret_key: 'sk_crm_demo', refresh_token: 'rt_crm_refresh', owner_email: 'sec@example.internal' } }
+                ]
+              }
+            ]
+          : []
+      },
+      SQLResult: request.SQL
+        ? { Columns: ['id', 'email'], Rows: [['1', 'ops@example.internal']], Total: 1, Shown: 1, Affected: 0, IsQuery: true }
+        : undefined
+    };
   }
 
-  function riskText(level: string) {
-    return level === 'high' ? '高敏' : level === 'medium' ? '中敏' : level === 'low' ? '低敏' : '-';
+  function demoFscanPreview(total = 2): FscanPreview {
+    return {
+      Total: total,
+      Targets: [
+        { Type: 'mysql', Host: '10.211.55.16', Port: 3306, User: 'root', Line: 1, Raw: 'mysql 10.211.55.16:3306 root:pass', Password: true },
+        { Type: 'redis', Host: '10.211.55.17', Port: 6379, User: '', Line: 2, Raw: 'redis 10.211.55.17:6379 pass', Password: true }
+      ].slice(0, Math.max(1, total))
+    };
+  }
+
+  function demoConnection(request: ScanRequest): ConnectionTestResult {
+    return {
+      Success: true,
+      Message: '浏览器预览：连接测试通过',
+      Type: request.Type,
+      Host: request.Host,
+      Port: request.Port,
+      Database: request.Database || '-',
+      User: request.User || '-',
+      Proxy: request.Proxy || '',
+      Version: 'preview',
+      ResolvedAddr: request.Host,
+      ServerTime: '-'
+    };
   }
 </script>
 
-<svelte:window on:pointermove={resizeResultPanel} on:pointerup={stopResizeResultPanel} />
-
-<main class="workbench">
-  <header class="topbar">
-    <div class="identity">
-      <div class="product-mark">DBS</div>
-      <div>
-        <h1>database_scan 审计工作台</h1>
-        <p>连接、扫描、证据、导出在同一条工作流里完成</p>
-      </div>
-    </div>
-    <div class="session-strip">
-      <span class="session-item">状态 <strong>{statusText}</strong></span>
-      <span class="session-item">进度 <strong>{state.Progress || 0}%</strong></span>
-      <span class="session-item">命中表 <strong>{tables.length}</strong></span>
-      <span class="session-item danger">高敏 <strong>{risk.high}</strong></span>
-      <span class="session-item warn">中敏 <strong>{risk.medium}</strong></span>
-      <span class="session-item low">低敏 <strong>{risk.low}</strong></span>
-    </div>
-  </header>
-
-  <section class="workspace">
-    <aside class="left-rail">
-      <section class="panel">
-        <div class="panel-heading">
-          <h2>工作模式</h2>
-          <span>{activePage}</span>
-        </div>
-        <div class="tabs">
-          <button class:active={activePage === 'single'} on:click={() => (activePage = 'single')}>单目标扫描</button>
-          <button class:active={activePage === 'fscan'} on:click={() => (activePage = 'fscan')}>fscan 批量</button>
-          <button class:active={activePage === 'sql'} on:click={() => (activePage = 'sql')}>自定义 SQL</button>
-        </div>
-      </section>
-
-      {#if formError}
-        <div class="error-line top-error">{formError}</div>
-      {/if}
-
-      {#if activePage !== 'fscan'}
-        <section class="panel">
-          <div class="panel-heading">
-            <h2>连接信息</h2>
-            <span>{request.Type || '-'}</span>
-          </div>
-          <div class="form-grid">
-            <label>
-              <span>数据库类型</span>
-              <select bind:value={request.Type} on:change={changeType}>
-                {#each dbTypes as type}
-                  <option value={type}>{type}</option>
-                {/each}
-              </select>
-            </label>
-            <label>
-              <span>端口</span>
-              <input type="number" bind:value={request.Port} />
-            </label>
-            <label class="full">
-              <span>Host</span>
-              <input bind:value={request.Host} placeholder="127.0.0.1" />
-            </label>
-            <label class="full">
-              <span>账号</span>
-              <input bind:value={request.User} autocomplete="off" />
-            </label>
-            <label class="full">
-              <span>密码</span>
-              <div class="password-field">
-                {#if showPassword}
-                  <input bind:value={request.Password} type="text" autocomplete="off" />
-                {:else}
-                  <input bind:value={request.Password} type="password" autocomplete="off" />
-                {/if}
-                <button type="button" on:click={() => (showPassword = !showPassword)}>{showPassword ? '隐藏' : '查看'}</button>
-              </div>
-            </label>
-            <label>
-              <span>指定库</span>
-              <input bind:value={request.Database} placeholder="audit_lab,other_db" />
-            </label>
-            <label>
-              <span>指定表</span>
-              <input bind:value={request.Table} placeholder="table_a,schema.table_b" />
-            </label>
-            <label class="full">
-              <span>代理</span>
-              <input bind:value={request.Proxy} placeholder="socks5://127.0.0.1:1080" />
-            </label>
-            <button class="full" type="button" on:click={testCurrentConnection} disabled={testingConnection}>
-              {testingConnection ? '测试中' : request.Proxy ? '测试连接/代理' : '测试连接'}
-            </button>
-          </div>
-          {#if connectionTest}
-            <div class="connection-test-result">
-              <strong>{connectionTest.Message}</strong>
-              <span>{connectionTest.Type} · {connectionTest.Host}:{connectionTest.Port} · {connectionTest.Proxy || '直连'}</span>
-            </div>
-          {/if}
-        </section>
-      {:else}
-        <section class="panel">
-          <div class="panel-heading">
-            <h2>fscan 结果</h2>
-            <span>{fscanPreview.Total} targets</span>
-          </div>
-          <div class="control-list">
-            <label>
-              <span>结果文件</span>
-              <input bind:value={request.Fscan} on:change={parseFscan} placeholder="/tmp/fscan_result.txt" />
-            </label>
-            <div class="button-row">
-              <button on:click={chooseFscanFile}>选择文件</button>
-              <button on:click={parseFscan}>解析预览</button>
-            </div>
-            <div class="manual-target-box">
-              <div class="manual-target-heading">
-                <span>手工多目标</span>
-                <button type="button" on:click={() => insertManualTarget(manualTargets.length)}>插入目标</button>
-              </div>
-              <div class="manual-target-list">
-                {#each manualTargets as target, index (target.ID)}
-                  <div class="manual-target-row">
-                    <div class="manual-target-grid">
-                      <label>
-                        <span>数据库</span>
-                        <select bind:value={target.Type} on:change={() => changeManualTargetType(index)}>
-                          {#each dbTypes as type}
-                            <option value={type}>{type}</option>
-                          {/each}
-                        </select>
-                      </label>
-                      <label>
-                        <span>端口</span>
-                        <input type="number" min="1" bind:value={target.Port} />
-                      </label>
-                      <label class="wide">
-                        <span>Host</span>
-                        <input bind:value={target.Host} placeholder="127.0.0.1" />
-                      </label>
-                      <div class="manual-credential-grid">
-                        <label>
-                          <span>账号</span>
-                          <input bind:value={target.User} disabled={target.Type === 'redis'} placeholder={target.Type === 'redis' ? 'Redis 可留空' : 'root'} />
-                        </label>
-                        <label>
-                          <span>密码</span>
-                          <div class="manual-password-field">
-                            {#if target.ShowPassword}
-                              <input bind:value={target.Password} type="text" autocomplete="off" />
-                            {:else}
-                              <input bind:value={target.Password} type="password" autocomplete="off" />
-                            {/if}
-                            <button type="button" on:click={() => toggleManualTargetPassword(index)}>{target.ShowPassword ? '隐藏' : '查看'}</button>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-                    <div class="manual-target-actions">
-                      <button type="button" on:click={() => testManualTarget(index)} disabled={testingConnection}>测试</button>
-                      <button type="button" on:click={() => insertManualTarget(index + 1)}>插入</button>
-                      <button type="button" on:click={() => removeManualTarget(index)}>删除</button>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            </div>
-            <div class="button-row">
-              <button on:click={parseManualTargets}>解析手工目标</button>
-              <button on:click={() => { manualTargets = [createManualTarget()]; request.FscanText = ''; fscanPreview = { Total: 0, Targets: [] }; }}>清空手工目标</button>
-            </div>
-            <label>
-              <span>批量代理</span>
-              <input bind:value={request.Proxy} placeholder="socks5://127.0.0.1:1080" />
-            </label>
-            {#if connectionTest}
-              <div class="connection-test-result">
-                <strong>{connectionTest.Message}</strong>
-                <span>{connectionTest.Type} · {connectionTest.Host}:{connectionTest.Port} · {connectionTest.Proxy || '直连'}</span>
-              </div>
-            {/if}
-            <label class="toggle-line">
-              <input type="checkbox" bind:checked={request.SplitOutput} />
-              <span>按目标拆分 Excel</span>
-            </label>
-          </div>
-        </section>
-      {/if}
-
-      <section class="panel">
-        <div class="panel-heading">
-          <h2>扫描参数</h2>
-          <span>{modeLabel(request.Mode)}</span>
-        </div>
-        <div class="control-list">
-          <div class="split-inputs">
-            <label>
-              <span>模式</span>
-              <select bind:value={request.Mode}>
-                <option value="field-content">字段名+内容</option>
-                <option value="field-name">字段名</option>
-                <option value="content">内容正则</option>
-                <option value="all">全部</option>
-              </select>
-            </label>
-            <label>
-              <span>敏感级别</span>
-              <select bind:value={request.Level}>
-                <option value="all">全部</option>
-                <option value="high">高敏</option>
-                <option value="medium">中敏</option>
-                <option value="low">低敏</option>
-              </select>
-            </label>
-          </div>
-          <div class="split-inputs">
-            <label>
-              <span>整行样例条数</span>
-              <input type="number" min="1" bind:value={request.Limit} />
-            </label>
-            <label>
-              <span>并发 workers</span>
-              <input type="number" min="1" bind:value={request.Workers} />
-            </label>
-          </div>
-          <label>
-            <span>单查询超时</span>
-            <input bind:value={request.Timeout} placeholder="15s" />
-          </label>
-          <label>
-            <span>Excel 输出</span>
-            <input bind:value={request.Output} placeholder="/tmp/database_scan_report.xlsx" />
-          </label>
-          <div class="button-row">
-            <button on:click={chooseOutputPath}>选择输出</button>
-            <button on:click={openFirstOutput} disabled={!state.Outputs?.length}>打开目录</button>
-          </div>
-          <label class="toggle-line">
-            <input type="checkbox" bind:checked={request.IncludeSystem} />
-            <span>包含系统库</span>
-          </label>
-          <label class="toggle-line">
-            <input type="checkbox" bind:checked={request.Mask} />
-            <span>脱敏展示和导出样例</span>
-          </label>
-          {#if activePage === 'sql'}
-            <label>
-              <span>SQL 原文</span>
-              <textarea bind:value={request.SQL} spellcheck="false" placeholder="SELECT * FROM users LIMIT 5"></textarea>
-            </label>
-            <div class="warning">自定义 SQL 将按原文执行。SELECT 会展示结果，非查询语句会返回影响行数。</div>
-          {/if}
-          <div class="actions">
-            {#if activePage === 'sql'}
-              <button class="primary" on:click={runSQL} disabled={isRunning}>确认执行 SQL</button>
-            {:else}
-              <button class="primary" on:click={startScan} disabled={isRunning}>开始扫描</button>
-            {/if}
-            <button on:click={stopScan} disabled={!isRunning}>停止</button>
-          </div>
-        </div>
-      </section>
-    </aside>
-
-    <section class="center-stage" style={`grid-template-rows: 86px 86px ${resultPanelHeight}px 8px minmax(260px, 1fr);`}>
-      <section class="scan-meter">
-        <div>
-          <span>当前目标</span>
-          <strong>{currentTargetLabel}</strong>
-        </div>
-        <div class="meter-track"><span style={`width:${state.Progress || 0}%`}></span></div>
-        <div class="meter-meta">
-          <span>{state.Message}</span>
-          <span>{request.Mode} / {levelLabel(request.Level)} / limit {request.Limit}</span>
-        </div>
-      </section>
-
-      {#if activePage === 'fscan'}
-        <section class="database-strip">
-          {#each fscanPreview.Targets.slice(0, 8) as target}
-            <button class="target-chip">
-              <strong>{target.Type}</strong>
-              <span>{target.Host}:{target.Port}</span>
-              <em>{target.User || 'redis'}</em>
-            </button>
-          {:else}
-            <span class="muted">选择 fscan 文件或填写手工目标清单后显示去重预览。</span>
-          {/each}
-        </section>
-      {:else}
-        <section class="database-strip">
-          <div><span>数据库</span><strong>{request.Database || '全部可访问库'}</strong></div>
-          <div><span>表过滤</span><strong>{request.Table || '未限制'}</strong></div>
-          <div><span>代理</span><strong>{request.Proxy || '直连'}</strong></div>
-          <div><span>导出</span><strong>{request.Output || '未设置'}</strong></div>
-        </section>
-      {/if}
-
-      <section class="result-panel">
-        <div class="panel-heading">
-          <h2>命中结果</h2>
-          <button class="mini-action" on:click={() => (selectedTableIndex = -1)} disabled={selectedTableIndex < 0}>显示全部样例</button>
-        </div>
-        <div class="result-table-wrap">
-          <table class="result-table">
-            <thead>
-              <tr>
-                <th>数据库</th>
-                <th>表</th>
-                <th>敏感字段</th>
-                <th>存在行数</th>
-                <th>风险</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each tables as table, index}
-                <tr class:active={index === selectedTableIndex} on:click={() => (selectedTableIndex = index)}>
-                  <td>{table.Database}</td>
-                  <td>{tableLabel(table)}</td>
-                  <td>{(table.Fields ?? []).map((f) => f.Name).join(', ')}</td>
-                  <td>{table.Total}</td>
-                  <td><span class={`risk-dot ${tableRisk(table)}`}>{riskText(tableRisk(table))}</span></td>
-                </tr>
-              {:else}
-                <tr><td colspan="5" class="empty">暂无扫描结果。</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <button
-        class="row-resizer"
-        class:active={resizingResultPanel}
-        type="button"
-        title="拖动调整命中结果和整行样例高度"
-        on:pointerdown={beginResizeResultPanel}
-      ></button>
-
-      <section class="panel sample-wide">
-        <div class="panel-heading">
-          <h2>整行样例</h2>
-          <span>{sampleScopeTables.length ? `${selectedTable ? tableLabel(selectedTable) : '全部命中表'} · ${filteredSampleRowsCount}/${sampleRowsCount} rows` : '-'}</span>
-        </div>
-        {#if sampleScopeTables.length}
-          <div class="sample-filter">
-            <label>
-              <span>样例值检索</span>
-              <input bind:value={sampleValueQuery} placeholder="默认显示所有数据" />
-            </label>
-            <label>
-              <span>字段检索</span>
-              <input bind:value={sampleFieldQuery} placeholder="字段名，如 phone / id_card" />
-            </label>
-            <label>
-              <span>关系</span>
-              <select bind:value={sampleSearchOp}>
-                <option value="and">与</option>
-                <option value="or">或</option>
-                <option value="not">非</option>
-              </select>
-            </label>
-          </div>
-          <div class="sample-scroll">
-            {#each filteredSampleGroups as group}
-              <section class="sample-group">
-                <div class="sample-group-heading" title={`${group.Table.Database} / ${tableLabel(group.Table)}`}>
-                  <strong>{group.Table.Database}</strong>
-                  <span>{tableLabel(group.Table)}</span>
-                  <em>{group.Rows.length}/{group.Table.Rows?.length ?? 0} rows</em>
-                </div>
-                <table>
-                  <thead><tr>{#each group.Headers as header}<th class={sampleHeaderClass(header, group.Table)}>{header}</th>{/each}</tr></thead>
-                  <tbody>
-                    {#each group.Rows as row}
-                      <tr>{#each group.Headers as header}<td class={`sample-cell ${sampleCellClass(header, row)}`}>{row.Values?.[header] ?? ''}</td>{/each}</tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </section>
-            {:else}
-              <div class="empty-detail">没有匹配的样例数据。</div>
-            {/each}
-          </div>
-        {:else}
-          <div class="empty-detail">扫描完成后会汇总展示所有命中表的整行样例。</div>
-        {/if}
-      </section>
+{#if loading}
+  <main class="auth-shell">
+    <section class="auth-card">
+      <div class="brand-lock">DB</div>
+      <h1>Database Scan</h1>
+      <p>正在载入任务工作台</p>
     </section>
-
-    <aside class="right-rail" style={`grid-template-rows: ${evidencePanelHeight}px 8px minmax(120px, 1fr);`}>
-      <section class="panel detail-panel">
-        <div class="panel-heading">
-          <h2>字段证据</h2>
-          <span>{selectedTable ? `${selectedTable.Schema}.${selectedTable.Name}` : globalEvidenceFields.length ? '全部命中表' : '-'}</span>
-        </div>
-        {#if selectedTable}
-          <div class="field-list">
-            {#each selectedTable.Fields ?? [] as field}
-              <div class={`field-row ${fieldLevel(field)}`}>
-                <strong>{field.Name}</strong>
-                <span>{(field.Kinds ?? []).join('/')} · {levelLabel(fieldLevel(field))} · {modeLabel(field.Mode)}</span>
-                <em>存在行数 {field.Total}</em>
-              </div>
-            {/each}
-          </div>
-        {:else if globalEvidenceFields.length}
-          <div class="field-list">
-            {#each globalEvidenceFields as field}
-              <div class={`field-row ${fieldLevel(field)}`}>
-                <strong>{field.Name}</strong>
-                <span>{field.Database} / {field.TableLabel}</span>
-                <span>{(field.Kinds ?? []).join('/')} · {levelLabel(fieldLevel(field))} · {modeLabel(field.Mode)}</span>
-                <em>存在行数 {field.Total}</em>
-              </div>
-            {/each}
-          </div>
+  </main>
+{:else if !vaultStatus.Unlocked}
+  <main class="auth-shell">
+    <section class="auth-card">
+      <div class="brand-lock">DB</div>
+      <h1>{vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
+      <p>任务配置、数据库密码和扫描结果会写入本地 AES-256 加密文件。</p>
+      <label>
+        <span>启动密码</span>
+        <input type="password" bind:value={password} placeholder="输入启动密码" on:keydown={(event) => event.key === 'Enter' && (vaultStatus.Initialized ? unlockVault() : setupVault())} />
+      </label>
+      {#if !vaultStatus.Initialized}
+        <label>
+          <span>确认密码</span>
+          <input type="password" bind:value={confirmPassword} placeholder="再次输入启动密码" on:keydown={(event) => event.key === 'Enter' && setupVault()} />
+        </label>
+      {/if}
+      {#if authError}<p class="error-line">{authError}</p>{/if}
+      <div class="auth-actions">
+        {#if vaultStatus.Initialized}
+          <button class="primary" on:click={unlockVault}>解锁</button>
+          <button on:click={resetVault}>清空并重置</button>
         {:else}
-          <div class="empty-detail">选择左侧结果行查看字段证据。</div>
+          <button class="primary" on:click={setupVault}>创建加密任务库</button>
         {/if}
-      </section>
-
-      <button
-        class="row-resizer"
-        class:active={resizingEvidencePanel}
-        type="button"
-        title="拖动调整字段证据和 SQL 结果高度"
-        on:pointerdown={beginResizeEvidencePanel}
-      ></button>
-
-      <section class="panel">
-        <div class="panel-heading">
-          <h2>SQL 结果</h2>
-          <span>{sqlResult ? (sqlResult.IsQuery ? `${sqlResult.Shown}/${sqlResult.Total}` : `${sqlResult.Affected}`) : '-'}</span>
+      </div>
+    </section>
+  </main>
+{:else}
+  <main class="platform-shell">
+    <header class="app-topbar">
+      <div class="brand-block">
+        <div class="brand-logo">DB</div>
+        <div>
+          <h1>Database Scan</h1>
+          <p>攻击面数据审计平台</p>
         </div>
-        {#if sqlResult}
-          {#if sqlResult.IsQuery}
-            <div class="sql-table-wrap">
+      </div>
+      <label class="search-box" aria-label="搜索任务">
+        <input bind:value={taskSearch} placeholder="搜索任务名称、详情或目标" />
+      </label>
+      <button class="primary" on:click={openNewTask}>新建任务</button>
+    </header>
+
+    {#if viewMode === 'overview'}
+      <section class="workspace overview-workspace">
+        <div class="hero-panel">
+          <div>
+            <span>任务工作台</span>
+            <h2>新建任务后再设置扫描目标，结果进入任务详情查看。</h2>
+            <p>当前任务库：{vaultStatus.Path || 'browser-preview'}</p>
+          </div>
+          <button class="primary" on:click={openNewTask}>新建任务</button>
+        </div>
+        <div class="stat-grid">
+          <div><span>全部任务</span><strong>{boardStats.total}</strong></div>
+          <div><span>运行中</span><strong>{boardStats.running}</strong></div>
+          <div><span>已完成</span><strong>{boardStats.completed}</strong></div>
+          <div><span>失败</span><strong>{boardStats.failed}</strong></div>
+        </div>
+        <section class="task-list">
+          <div class="section-heading">
+            <h2>任务列表</h2>
+            <span>{filteredTasks.length} tasks</span>
+          </div>
+          {#if filteredTasks.length === 0}
+            <div class="empty-state">
+              <strong>还没有任务</strong>
+              <span>创建一个任务，填写名称与详情后进入扫描目标配置。</span>
+              <button class="primary" on:click={openNewTask}>新建任务</button>
+            </div>
+          {:else}
+            {#each filteredTasks as task (task.ID)}
+              <article class="task-row">
+                <div class="task-main">
+                  <strong>{task.Name}</strong>
+                  <span>{task.Description || '未填写任务详情'}</span>
+                </div>
+                <span class:running={task.Status === 'running'} class:completed={task.Status === 'completed'} class:failed={task.Status === 'failed'} class="status-pill">{statusLabel(task.Status)}</span>
+                <div class="task-progress">
+                  <span>{kindLabel(task.Kind)} · {task.TargetLabel || targetLabel(task.Request, task.Kind)}</span>
+                  <div class="task-risk-row">
+                    {#if riskTotals(task.State?.Result?.Tables ?? []).high || riskTotals(task.State?.Result?.Tables ?? []).medium || riskTotals(task.State?.Result?.Tables ?? []).low}
+                      <i class="risk-pill high">高 {riskTotals(task.State?.Result?.Tables ?? []).high}</i>
+                      <i class="risk-pill medium">中 {riskTotals(task.State?.Result?.Tables ?? []).medium}</i>
+                      <i class="risk-pill low">低 {riskTotals(task.State?.Result?.Tables ?? []).low}</i>
+                    {:else}
+                      <i class="risk-pill empty">暂无风险数据</i>
+                    {/if}
+                  </div>
+                  <div class="progress-line"><i style={`width: ${Math.max(0, Math.min(100, task.Progress || task.State?.Progress || 0))}%`}></i></div>
+                </div>
+                <div class="task-actions">
+                  <button on:click={() => editTask(task)} disabled={task.Status === 'running'}>配置</button>
+                  <button on:click={() => viewTask(task)}>详情</button>
+                  <button class="primary" on:click={() => startTask(task)} disabled={task.Status === 'running'}>开始</button>
+                </div>
+              </article>
+            {/each}
+          {/if}
+        </section>
+      </section>
+    {:else if viewMode === 'wizard'}
+      <section class="workspace wizard-workspace">
+        <div class="wizard-header">
+          <button on:click={() => (viewMode = 'overview')}>返回任务列表</button>
+          <div>
+            <h2>{wizardEditingID ? '编辑任务' : '新建任务'}</h2>
+            <span>先定义任务，再设置扫描目标</span>
+          </div>
+        </div>
+        <div class="stepper">
+          {#each ['任务信息', '任务类型', '扫描目标', '扫描参数'] as label, index}
+            <button class:active={wizardStep === index + 1} class:done={wizardStep > index + 1} on:click={() => (wizardStep = index + 1)}>{index + 1}. {label}</button>
+          {/each}
+        </div>
+
+        <section class="setup-card">
+          {#if wizardStep === 1}
+            <div class="card-title">
+              <h2>任务名称与详情</h2>
+              <span>名称会显示在任务列表，详情用于说明扫描目的。</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>任务名称</span>
+                <input bind:value={draftName} placeholder="例如：生产客户库敏感字段审计" />
+              </label>
+              <label>
+                <span>任务详情</span>
+                <textarea bind:value={draftDescription} placeholder="记录扫描范围、授权背景、关注字段或交付说明"></textarea>
+              </label>
+            </div>
+          {:else if wizardStep === 2}
+            <div class="card-title">
+              <h2>选择任务类型</h2>
+              <span>不同类型会进入不同的目标配置方式。</span>
+            </div>
+            <div class="kind-grid">
+              {#each [
+                { id: 'single', title: '单目标扫描', body: '连接一个数据库实例并扫描敏感字段。' },
+                { id: 'fscan', title: 'fscan 批量扫描', body: '导入 fscan 结果或手工维护多目标。' },
+                { id: 'sql', title: 'SQL 语句执行', body: '连接数据库后执行自定义 SQL。' }
+              ] as option}
+                <button class:active={draftKind === option.id} on:click={() => setDraftKind(option.id)}>
+                  <strong>{option.title}</strong>
+                  <span>{option.body}</span>
+                </button>
+              {/each}
+            </div>
+          {:else if wizardStep === 3}
+            <div class="card-title">
+              <h2>设置扫描目标</h2>
+              <span>{kindLabel(draftKind)}</span>
+            </div>
+            {#if draftKind === 'fscan'}
+              <div class="fscan-layout">
+                <label>
+                  <span>fscan 结果文件</span>
+                  <div class="inline-controls">
+                    <input bind:value={draftRequest.Fscan} placeholder="/tmp/fscan_result.txt" />
+                    <button on:click={chooseFscanFile}>选择文件</button>
+                  </div>
+                </label>
+                <label class="batch-proxy">
+                  <span>批量代理</span>
+                  <input bind:value={draftRequest.Proxy} placeholder="socks5://127.0.0.1:1080，留空则直连" />
+                </label>
+                <div class="manual-toolbar">
+                  <h2>手工多目标</h2>
+                  <div>
+                    <button on:click={addManualTarget}>新增目标</button>
+                    <button on:click={removeLastManualTarget}>删除末项</button>
+                    <button on:click={clearManualTargets}>清空</button>
+                    <button class="primary" on:click={parseManualTargets}>解析预览</button>
+                  </div>
+                </div>
+                <div class="manual-table">
+                  {#each manualTargets as target, index (target.ID)}
+                    <div class="manual-row">
+                      <select bind:value={target.Type} on:change={() => changeManualType(index)}>
+                        {#each dbTypes as type}<option value={type}>{type}</option>{/each}
+                      </select>
+                      <input bind:value={target.Host} placeholder="Host" />
+                      <input type="number" bind:value={target.Port} placeholder="端口" />
+                      <input bind:value={target.User} placeholder="账号" disabled={target.Type === 'redis'} />
+                      <input type={target.ShowPassword ? 'text' : 'password'} value={target.Password} on:input={(event) => updateManualPassword(index, event)} placeholder="密码" />
+                      <button on:click={() => ((target.ShowPassword = !target.ShowPassword), (manualTargets = [...manualTargets]))}>{target.ShowPassword ? '隐藏' : '查看'}</button>
+                      <button on:click={() => testManualTargetConnection(index)} disabled={testingConnection && manualTestingIndex === index}>{testingConnection && manualTestingIndex === index ? '测试中' : '测试'}</button>
+                      <button class="danger" on:click={() => removeManualTarget(index)}>删除</button>
+                    </div>
+                  {/each}
+                </div>
+                {#if connectionTest}
+                  <div class="manual-test-result" class:ok={connectionTest.Success}>
+                    <strong>{connectionTest.Success ? '连接通过' : '连接失败'}</strong>
+                    <span>{connectionTest.Message} · {connectionTest.Type}://{connectionTest.Host}:{connectionTest.Port}{connectionTest.Proxy ? ` · ${connectionTest.Proxy}` : ''}</span>
+                  </div>
+                {/if}
+                <div class="preview-box">
+                  <strong>fscan 解析结果</strong>
+                  <span>{fscanPreview.Total || 0} 个目标</span>
+                  {#each fscanPreview.Targets ?? [] as target}
+                    <code>{target.Type} {target.Host}:{target.Port} {target.User || '-'}</code>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <div class="form-grid">
+                <label>
+                  <span>数据库类型</span>
+                  <select bind:value={draftRequest.Type} on:change={changeDraftType}>
+                    {#each dbTypes as type}<option value={type}>{type}</option>{/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Host</span>
+                  <input bind:value={draftRequest.Host} placeholder="127.0.0.1" />
+                </label>
+                <label>
+                  <span>端口</span>
+                  <input type="number" bind:value={draftRequest.Port} />
+                </label>
+                <label>
+                  <span>账号</span>
+                  <input bind:value={draftRequest.User} disabled={draftRequest.Type === 'redis'} />
+                </label>
+                <label>
+                  <span>密码</span>
+                  <div class="inline-controls">
+                    <input type={showPassword ? 'text' : 'password'} value={draftRequest.Password} on:input={updateDraftPassword} />
+                    <button on:click={() => (showPassword = !showPassword)}>{showPassword ? '隐藏' : '查看'}</button>
+                  </div>
+                </label>
+                <label>
+                  <span>指定库</span>
+                  <input bind:value={draftRequest.Database} placeholder="audit_lab" />
+                </label>
+                <label>
+                  <span>指定表</span>
+                  <input bind:value={draftRequest.Table} placeholder="schema.table" />
+                </label>
+                <label>
+                  <span>代理</span>
+                  <input bind:value={draftRequest.Proxy} placeholder="socks5://127.0.0.1:1080" />
+                </label>
+              </div>
+              {#if draftKind === 'sql'}
+                <label class="sql-editor">
+                  <span>SQL 语句</span>
+                  <textarea bind:value={draftRequest.SQL} placeholder="select * from users limit 20"></textarea>
+                </label>
+              {/if}
+              <div class="form-actions">
+                <button on:click={testConnectionFromDraft} disabled={testingConnection}>{testingConnection ? '测试中' : '测试连接'}</button>
+                {#if connectionTest}
+                  <span class:ok={connectionTest.Success} class="connection-note">{connectionTest.Message} · {connectionTest.ResolvedAddr}</span>
+                {/if}
+              </div>
+            {/if}
+          {:else}
+            <div class="card-title">
+              <h2>扫描参数</h2>
+              <span>保存后会进入任务详情，可以立即启动。</span>
+            </div>
+            <div class="form-grid params-grid">
+              <label>
+                <span>模式</span>
+                <select bind:value={draftRequest.Mode}>
+                  <option value="field-content">字段名+内容</option>
+                  <option value="field-name">字段名</option>
+                  <option value="content">内容正则</option>
+                  <option value="all">全部</option>
+                </select>
+              </label>
+              <label>
+                <span>敏感级别</span>
+                <select bind:value={draftRequest.Level}>
+                  <option value="all">全部</option>
+                  <option value="high">高敏</option>
+                  <option value="medium">中敏</option>
+                  <option value="low">低敏</option>
+                </select>
+              </label>
+              <label>
+                <span>样例条数</span>
+                <input type="number" min="1" bind:value={draftRequest.Limit} />
+              </label>
+              <label>
+                <span>并发</span>
+                <input type="number" min="1" bind:value={draftRequest.Workers} />
+              </label>
+              <label>
+                <span>超时</span>
+                <input bind:value={draftRequest.Timeout} />
+              </label>
+              <label>
+                <span>Excel 输出</span>
+                <div class="inline-controls">
+                  <input bind:value={draftRequest.Output} placeholder="/tmp/database_scan_report.xlsx" />
+                  <button on:click={chooseOutputPath}>选择输出</button>
+                </div>
+              </label>
+            </div>
+            <div class="check-row">
+              <label><input type="checkbox" bind:checked={draftRequest.IncludeSystem} /> 系统库</label>
+              <label><input type="checkbox" bind:checked={draftRequest.Mask} /> 脱敏</label>
+              {#if draftKind === 'fscan'}<label><input type="checkbox" bind:checked={draftRequest.SplitOutput} /> 按目标拆分 Excel</label>{/if}
+            </div>
+            <div class="summary-strip">
+              <strong>{draftName || '未命名任务'}</strong>
+              <span>{kindLabel(draftKind)} · {modeLabel(draftRequest.Mode)} / {levelLabel(draftRequest.Level)}</span>
+              <span>{targetLabel(requestForKind(), draftKind)}</span>
+            </div>
+          {/if}
+        </section>
+
+        {#if wizardError || formError}<p class="error-line">{wizardError || formError}</p>{/if}
+        <div class="wizard-actions">
+          <button on:click={prevWizardStep} disabled={wizardStep === 1}>上一步</button>
+          {#if wizardStep < 4}
+            <button class="primary" on:click={nextWizardStep}>下一步</button>
+          {:else}
+            <button class="primary" on:click={saveTask}>保存并进入详情</button>
+          {/if}
+        </div>
+      </section>
+    {:else if selectedTask}
+      <section class="workspace detail-workspace">
+        <div class="detail-titlebar">
+          <button on:click={() => (viewMode = 'overview')}>返回任务列表</button>
+          <div class="detail-title">
+            <span>{kindLabel(selectedTask.Kind)} · {statusLabel(selectedTask.Status)}</span>
+            <h2>{selectedTask.Name}</h2>
+            <p>{selectedTask.Description || '未填写任务详情'}</p>
+          </div>
+          <div class="detail-actions">
+            <button on:click={() => editTask(selectedTask)} disabled={selectedTask.Status === 'running'}>配置</button>
+            {#if selectedTask.Status === 'running'}
+              <button on:click={() => stopTask()}>停止</button>
+            {:else}
+              <button class="primary" on:click={() => startTask()}>开始</button>
+            {/if}
+            <button on:click={refreshSelectedTask}>刷新</button>
+            <button class="danger" on:click={() => deleteTask(selectedTask)}>删除</button>
+          </div>
+        </div>
+        {#if formError}<p class="error-line">{formError}</p>{/if}
+        <div class="detail-grid">
+          <section class="overview-panel">
+            <div class="metric-row">
+              <div><span>命中表</span><strong>{currentTables.length}</strong></div>
+              <div><span>敏感字段</span><strong>{currentEvidence.length}</strong></div>
+              <div><span>高敏命中</span><strong>{currentRisk.high}</strong></div>
+              <div><span>当前进度</span><strong>{currentState.Progress || selectedTask.Progress || 0}%</strong></div>
+            </div>
+            <div class="progress-line"><i style={`width: ${Math.max(0, Math.min(100, currentState.Progress || selectedTask.Progress || 0))}%`}></i></div>
+            <div class="overview-foot">
+              <span>{currentState.Message || selectedTask.Message || '等待扫描'}</span>
+              <em>{currentState.TargetLabel || selectedTask.TargetLabel || targetLabel(selectedTask.Request, selectedTask.Kind)}</em>
+            </div>
+          </section>
+          <section class="task-info-panel">
+            <h2>任务信息</h2>
+            <div><span>创建时间</span><strong>{formatTime(selectedTask.CreatedAt)}</strong></div>
+            <div><span>更新时间</span><strong>{formatTime(selectedTask.UpdatedAt)}</strong></div>
+            <div><span>扫描模式</span><strong>{modeLabel(selectedTask.Request.Mode)}</strong></div>
+            <div><span>输出文件</span><strong>{currentState.Outputs?.[0] || selectedTask.Request.Output || '-'}</strong></div>
+          </section>
+        </div>
+
+        <section class="result-panel">
+          <div class="activity-tabs">
+            {#each detailTabs(showSQLTab) as tab}
+              <button class:active={activeTab === tab[0]} on:click={() => setDetailTab(tab[0])}>{tab[1]}</button>
+            {/each}
+          </div>
+
+          {#if activeTab === 'hits'}
+            <div class="table-tools">
+              <label><span>数据内容检索</span><input bind:value={dataQuery} placeholder="手机号 / 邮箱 / token 值" /></label>
+              <label><span>字段检索</span><input bind:value={fieldQuery} placeholder="phone / id_card / token" /></label>
+              <label><span>关系</span><select bind:value={relation}><option value="and">与</option><option value="or">或</option><option value="not">非</option></select></label>
+              <label><span>风险</span><select bind:value={riskFilter}><option value="all">全部</option><option value="high">高危</option><option value="medium">中危</option><option value="low">低危</option></select></label>
+            </div>
+            <div class="result-table-wrap">
               <table>
-                <thead><tr>{#each sqlResult.Columns as col}<th>{col}</th>{/each}</tr></thead>
-                <tbody>{#each sqlResult.Rows as row}<tr>{#each row as cell}<td>{cell}</td>{/each}</tr>{/each}</tbody>
+                <thead><tr><th>数据库</th><th>表</th><th>敏感字段</th><th>存在行数</th><th>风险</th></tr></thead>
+                <tbody>
+                  {#each filteredTables as table}
+                    <tr>
+                      <td>{table.Database}</td>
+                      <td>{tableLabel(table)}</td>
+                      <td>{(table.Fields ?? []).map((field) => field.Name).join(', ')}</td>
+                      <td>{table.Total}</td>
+                      <td><span class={`risk-dot ${table.Fields?.some((field) => fieldLevel(field) === 'high') ? 'high' : 'medium'}`}>{table.Fields?.some((field) => fieldLevel(field) === 'high') ? '高敏' : '命中'}</span></td>
+                    </tr>
+                  {/each}
+                </tbody>
               </table>
             </div>
+          {:else if activeTab === 'fields'}
+            <div class="field-list" class:has-popover={Boolean(selectedEvidence)}>
+              {#each currentEvidence as field}
+                <button class={`field-row ${fieldLevel(field)}`} class:selected={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName} on:click={() => selectEvidenceField(field)}>
+                  <strong>{field.Name}</strong>
+                  <span>{field.Database} / {field.TableName}</span>
+                  <em>{(field.Kinds ?? []).join(' / ')} · {levelLabel(fieldLevel(field))}</em>
+                </button>
+              {/each}
+            </div>
+            {#if selectedEvidence}
+              <aside class={`field-popover ${fieldLevel(selectedEvidence)}`}>
+                <header>
+                  <div>
+                    <span>字段详情</span>
+                    <strong>{selectedEvidence.Name}</strong>
+                  </div>
+                  <button on:click={() => (selectedEvidence = undefined)}>关闭</button>
+                </header>
+                <div class="field-detail-grid">
+                  <div><span>数据库</span><strong>{selectedEvidence.Database}</strong></div>
+                  <div><span>表</span><strong>{selectedEvidence.TableName}</strong></div>
+                  <div><span>风险等级</span><strong>{levelLabel(fieldLevel(selectedEvidence))}</strong></div>
+                  <div><span>命中数量</span><strong>{selectedEvidence.Total || selectedEvidence.Table.Total || 0}</strong></div>
+                  <div><span>命中类型</span><strong>{(selectedEvidence.Kinds ?? []).join(' / ') || '-'}</strong></div>
+                  <div><span>扫描模式</span><strong>{modeLabel(selectedEvidence.Mode)}</strong></div>
+                </div>
+                <section class="field-samples">
+                  <div class="field-samples-heading">
+                    <span>样例值</span>
+                    <strong>{fieldSampleValues(selectedEvidence).length} values</strong>
+                  </div>
+                  {#each fieldSampleValues(selectedEvidence) as sample}
+                    <code><span>#{sample.Index}</span>{sample.Value}</code>
+                  {:else}
+                    <p>暂无样例值</p>
+                  {/each}
+                </section>
+              </aside>
+            {/if}
+          {:else if activeTab === 'targets'}
+            <div class="target-list">
+              {#if selectedTask.Kind === 'fscan'}
+                {#each (selectedTask.Request.FscanText || '').split('\n').filter(Boolean) as line, index}
+                  <code>{index + 1}. {line}</code>
+                {:else}
+                  <code>{selectedTask.Request.Fscan || '暂无批量目标，返回配置页导入 fscan 文件或填写手工目标。'}</code>
+                {/each}
+              {:else}
+                <code>{targetLabel(selectedTask.Request, selectedTask.Kind)}</code>
+              {/if}
+            </div>
+          {:else if activeTab === 'sql'}
+            <div class="sql-panel">
+              {#if currentState.SQLResult}
+                <div class="section-heading">
+                  <h2>SQL 执行结果</h2>
+                  <span>{currentState.SQLResult.Shown}/{currentState.SQLResult.Total} rows</span>
+                </div>
+                <div class="sql-table-wrap">
+                  <table>
+                    <thead><tr>{#each currentState.SQLResult.Columns ?? [] as column}<th>{column}</th>{/each}</tr></thead>
+                    <tbody>{#each currentState.SQLResult.Rows ?? [] as row}<tr>{#each row as cell}<td>{cell}</td>{/each}</tr>{/each}</tbody>
+                  </table>
+                </div>
+              {:else}
+                <div class="empty-state"><strong>暂无 SQL 结果</strong><span>SQL 任务启动后会在这里显示查询或影响行数。</span></div>
+              {/if}
+            </div>
+          {:else if activeTab === 'samples'}
+            <div class="sample-scroll">
+              {#each sampleRows as row}
+                <article class="sample-group">
+                  <div class="sample-group-heading">
+                    <div><em>数据库名</em><strong>{row.Table.Database}</strong></div>
+                    <div><em>表名</em><span>{tableLabel(row.Table)}</span></div>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        {#each row.Headers as header}
+                          <th class:sample-high={sampleHeaderRisk(row.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(row.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(row.Table, header) === 'low'}>
+                            <span>{header}</span>
+                            {#if sampleHeaderRisk(row.Table, header)}
+                              <em>{levelLabel(sampleHeaderRisk(row.Table, header))}{sampleHeaderKinds(row.Table, header) ? ` · ${sampleHeaderKinds(row.Table, header)}` : ''}</em>
+                            {/if}
+                          </th>
+                        {/each}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {#each row.Headers as header}
+                          <td class:sample-high={sampleHeaderRisk(row.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(row.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(row.Table, header) === 'low'}>
+                            {row.Values[header] ?? ''}
+                          </td>
+                        {/each}
+                      </tr>
+                    </tbody>
+                  </table>
+                </article>
+              {:else}
+                <div class="empty-state"><strong>暂无样例数据</strong><span>扫描命中后会按表展示样例行。</span></div>
+              {/each}
+            </div>
           {:else}
-            <div class="affected">影响行数：{sqlResult.Affected}</div>
+            <div class="log-list">
+              {#each currentState.Logs ?? [] as log}
+                <code><span>{log.Time}</span> [{log.Level}] {log.Message}</code>
+              {:else}
+                <div class="empty-state"><strong>暂无日志</strong><span>任务运行时会滚动记录连接、扫描和输出信息。</span></div>
+              {/each}
+              {#each currentState.Outputs ?? [] as output}
+                <button on:click={() => openOutput(output)}>打开输出目录：{output}</button>
+              {/each}
+            </div>
           {/if}
-        {:else}
-          <div class="empty-detail">自定义 SQL 的 SELECT 结果或 Exec 影响行数会显示在这里。</div>
-        {/if}
+        </section>
       </section>
-    </aside>
-  </section>
-
-  <footer class="bottom-console">
-    <section>
-      <div class="console-heading">
-        <h2>实时日志</h2>
-        <span>{state.Logs?.length ?? 0} lines</span>
-      </div>
-      <div class="log-stream">
-        {#each state.Logs ?? [] as log}
-          <div class={log.Level}><span>{log.Time}</span><strong>{log.Level}</strong>{log.Message}</div>
-        {:else}
-          <div><span>--:--:--</span><strong>idle</strong>等待任务。</div>
-        {/each}
-      </div>
-    </section>
-    <section>
-      <div class="console-heading">
-        <h2>扫描错误</h2>
-        <span>{(state.Errors?.length ?? 0) + (state.Result?.Errors?.length ?? 0)}</span>
-      </div>
-      <div class="error-stream">
-        {#each [...(state.Errors ?? []), ...(state.Result?.Errors ?? [])] as error}
-          <div>{error}</div>
-        {:else}
-          <div class="muted">暂无错误。</div>
-        {/each}
-      </div>
-    </section>
-    <section>
-      <div class="console-heading">
-        <h2>导出状态</h2>
-        <span>{state.Outputs?.length ?? 0} files</span>
-      </div>
-      <div class="output-list">
-        {#each state.Outputs ?? [] as path}
-          <button on:click={() => hasWailsRuntime() && OpenOutputFolder(path)}>{path}</button>
-        {:else}
-          <div class="muted">设置输出路径后，扫描完成会写入 xlsx。</div>
-        {/each}
-      </div>
-    </section>
-  </footer>
-</main>
+    {/if}
+  </main>
+{/if}

@@ -1,5 +1,5 @@
 export namespace app {
-	
+
 	export class ConnectionTestResult {
 	    Success: boolean;
 	    Message: string;
@@ -12,11 +12,11 @@ export namespace app {
 	    Version: string;
 	    ResolvedAddr: string;
 	    ServerTime: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ConnectionTestResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Success = source["Success"];
@@ -39,11 +39,11 @@ export namespace app {
 	    Shown: number;
 	    Affected: number;
 	    IsQuery: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CustomSQLResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Columns = source["Columns"];
@@ -62,11 +62,11 @@ export namespace app {
 	    Line: number;
 	    Raw: string;
 	    Password: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FscanTargetPreview(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Type = source["Type"];
@@ -81,17 +81,17 @@ export namespace app {
 	export class FscanPreview {
 	    Targets: FscanTargetPreview[];
 	    Total: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FscanPreview(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Targets = this.convertValues(source["Targets"], FscanTargetPreview);
 	        this.Total = source["Total"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -110,16 +110,16 @@ export namespace app {
 		    return a;
 		}
 	}
-	
+
 	export class LogEntry {
 	    Time: string;
 	    Level: string;
 	    Message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Time = source["Time"];
@@ -148,11 +148,11 @@ export namespace app {
 	    Mask: boolean;
 	    Workers: number;
 	    Timeout: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ScanRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Type = source["Type"];
@@ -193,11 +193,11 @@ export namespace app {
 	    Errors: string[];
 	    StartedAt: string;
 	    FinishedAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ScanJobState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.JobID = source["JobID"];
@@ -216,7 +216,7 @@ export namespace app {
 	        this.StartedAt = source["StartedAt"];
 	        this.FinishedAt = source["FinishedAt"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -238,8 +238,159 @@ export namespace app {
 
 }
 
+export namespace main {
+
+	export class CreateTaskRequest {
+	    Name: string;
+	    Description: string;
+	    Kind: string;
+	    Request: app.ScanRequest;
+
+	    static createFrom(source: any = {}) {
+	        return new CreateTaskRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Name = source["Name"];
+	        this.Description = source["Description"];
+	        this.Kind = source["Kind"];
+	        this.Request = this.convertValues(source["Request"], app.ScanRequest);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GUITask {
+	    ID: string;
+	    Name: string;
+	    Description: string;
+	    Kind: string;
+	    Status: string;
+	    Progress: number;
+	    Message: string;
+	    TargetLabel: string;
+	    Request: app.ScanRequest;
+	    State: app.ScanJobState;
+	    CreatedAt: string;
+	    UpdatedAt: string;
+	    StartedAt: string;
+	    FinishedAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new GUITask(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Name = source["Name"];
+	        this.Description = source["Description"];
+	        this.Kind = source["Kind"];
+	        this.Status = source["Status"];
+	        this.Progress = source["Progress"];
+	        this.Message = source["Message"];
+	        this.TargetLabel = source["TargetLabel"];
+	        this.Request = this.convertValues(source["Request"], app.ScanRequest);
+	        this.State = this.convertValues(source["State"], app.ScanJobState);
+	        this.CreatedAt = source["CreatedAt"];
+	        this.UpdatedAt = source["UpdatedAt"];
+	        this.StartedAt = source["StartedAt"];
+	        this.FinishedAt = source["FinishedAt"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class UpdateTaskRequest {
+	    ID: string;
+	    Name: string;
+	    Description: string;
+	    Kind: string;
+	    Request: app.ScanRequest;
+
+	    static createFrom(source: any = {}) {
+	        return new UpdateTaskRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Name = source["Name"];
+	        this.Description = source["Description"];
+	        this.Kind = source["Kind"];
+	        this.Request = this.convertValues(source["Request"], app.ScanRequest);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class VaultStatus {
+	    Initialized: boolean;
+	    Unlocked: boolean;
+	    Path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new VaultStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Initialized = source["Initialized"];
+	        this.Unlocked = source["Unlocked"];
+	        this.Path = source["Path"];
+	    }
+	}
+
+}
+
 export namespace db {
-	
+
 	export class ServerInfo {
 	    Host: string;
 	    Port: number;
@@ -252,11 +403,11 @@ export namespace db {
 	    ResolvedAddr: string;
 	    Proxy: string;
 	    IncludeSystem: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ServerInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Host = source["Host"];
@@ -276,7 +427,7 @@ export namespace db {
 }
 
 export namespace redis {
-	
+
 	export class Info {
 	    Host: string;
 	    Port: number;
@@ -288,11 +439,11 @@ export namespace redis {
 	    Proxy: string;
 	    ServerTime: string;
 	    RequireAuth: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Info(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Host = source["Host"];
@@ -311,18 +462,18 @@ export namespace redis {
 }
 
 export namespace scanner {
-	
+
 	export class FieldResult {
 	    Name: string;
 	    Kinds: string[];
 	    Level: string;
 	    Mode: string;
 	    Total: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FieldResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Name = source["Name"];
@@ -334,11 +485,11 @@ export namespace scanner {
 	}
 	export class RowSample {
 	    Values: Record<string, string>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RowSample(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Values = source["Values"];
@@ -352,11 +503,11 @@ export namespace scanner {
 	    Columns: string[];
 	    Fields: FieldResult[];
 	    Rows: RowSample[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TableResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Database = source["Database"];
@@ -367,7 +518,7 @@ export namespace scanner {
 	        this.Fields = this.convertValues(source["Fields"], FieldResult);
 	        this.Rows = this.convertValues(source["Rows"], RowSample);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -395,11 +546,11 @@ export namespace scanner {
 	    Level: string;
 	    Mode: string;
 	    Value: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Sample(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Database = source["Database"];
@@ -421,11 +572,11 @@ export namespace scanner {
 	    Level: string;
 	    Mode: string;
 	    Total: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Database = source["Database"];
@@ -443,11 +594,11 @@ export namespace scanner {
 	    Samples: Sample[];
 	    Tables: TableResult[];
 	    Errors: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Summaries = this.convertValues(source["Summaries"], Summary);
@@ -455,7 +606,7 @@ export namespace scanner {
 	        this.Tables = this.convertValues(source["Tables"], TableResult);
 	        this.Errors = source["Errors"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -474,9 +625,8 @@ export namespace scanner {
 		    return a;
 		}
 	}
-	
-	
-	
+
+
+
 
 }
-
