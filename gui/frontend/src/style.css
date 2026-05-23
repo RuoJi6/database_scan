@@ -429,7 +429,7 @@ label span,
 }
 
 .task-list {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .section-heading,
@@ -465,7 +465,8 @@ label span,
 
 .task-main strong,
 .task-main span,
-.task-progress span {
+.task-progress span,
+.target-summary-button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -496,9 +497,107 @@ label span,
 }
 
 .task-progress {
+  position: relative;
   min-width: 0;
   display: grid;
   gap: 6px;
+}
+
+.target-summary-button {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font-size: 12px;
+}
+
+.target-summary-button:hover:not(:disabled) {
+  color: var(--blue);
+  background: transparent;
+  box-shadow: none;
+}
+
+.target-popover {
+  position: absolute;
+  left: 0;
+  top: 24px;
+  z-index: 30;
+  width: min(440px, 86vw);
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dce6f3;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(31, 45, 61, 0.16);
+}
+
+.target-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.target-popover-head strong {
+  color: #20242a;
+  font-size: 13px;
+}
+
+.target-popover-head button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.target-popover-row {
+  display: grid;
+  grid-template-columns: 28px 86px minmax(120px, 1fr) minmax(72px, 0.7fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #eef2f7;
+  border-radius: 7px;
+  padding: 8px;
+  background: #fbfcfe;
+  font-size: 12px;
+}
+
+.target-popover-row span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #5b6775;
+  background: #edf2f8;
+  font-weight: 720;
+}
+
+.target-popover-row strong,
+.target-popover-row em,
+.target-popover-row code {
+  overflow: hidden;
+  color: #334155;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-popover-row em {
+  font-style: normal;
+}
+
+.target-popover-row code {
+  color: #64748b;
+}
+
+.target-popover p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .task-progress .proxy-line {

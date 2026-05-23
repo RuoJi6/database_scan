@@ -225,6 +225,7 @@
   let backupBusy = false;
   let backupError = '';
   let backupResult: BackupResult | undefined;
+  let activeTargetPopoverID = '';
 
   $: currentState = selectedTask?.State ?? emptyState;
   $: currentTables = currentState.Result?.Tables ?? [];
@@ -329,6 +330,7 @@
   }
 
   function openNewTask() {
+    activeTargetPopoverID = '';
     wizardEditingID = '';
     draftName = '';
     draftDescription = '';
@@ -353,6 +355,7 @@
   }
 
   function editTask(task: GUITask) {
+    activeTargetPopoverID = '';
     wizardEditingID = task.ID;
     draftName = task.Name;
     draftDescription = task.Description;
@@ -367,6 +370,7 @@
   }
 
   function viewTask(task: GUITask) {
+    activeTargetPopoverID = '';
     selectedTask = task;
     activeTab = shouldShowSQLTab(task) && task.Kind === 'sql' ? 'sql' : 'hits';
     selectedEvidence = undefined;
@@ -958,8 +962,42 @@
   }
 
   function targetLabel(request: ScanRequest, kind: TaskKind) {
-    if (kind === 'fscan') return request.Fscan || `${request.FscanText.split('\n').filter(Boolean).length} targets`;
+    if (kind === 'fscan') {
+      const total = multiTargetItems(request).filter((target) => target.Type !== 'fscan 文件').length;
+      if (total > 0) return `${total} 个目标`;
+      if (request.Fscan?.trim()) return '文件导入';
+      return '待配置目标';
+    }
     return `${request.Type || 'db'}://${request.Host || '未设置'}:${request.Port || '-'}`;
+  }
+
+  function taskTargetSummary(task: GUITask) {
+    return `${kindLabel(task.Kind)} · ${targetLabel(task.Request, task.Kind)}`;
+  }
+
+  function toggleTargetPopover(id: string) {
+    activeTargetPopoverID = activeTargetPopoverID === id ? '' : id;
+  }
+
+  function multiTargetItems(request: ScanRequest) {
+    const lines = (request.FscanText || '').split('\n').map((line) => line.trim()).filter(Boolean);
+    if (lines.length) return lines.map(parseTargetLine);
+    if (request.Fscan?.trim()) {
+      return [{ Index: 1, Type: 'fscan 文件', Host: request.Fscan.trim(), Port: '', User: '-', Raw: request.Fscan.trim() }];
+    }
+    return [];
+  }
+
+  function parseTargetLine(line: string, index: number) {
+    const parts = line.split(/\s+/);
+    const type = parts[0] || 'db';
+    const hostPort = parts[1] || '';
+    const divider = hostPort.lastIndexOf(':');
+    const host = divider > -1 ? hostPort.slice(0, divider) : hostPort;
+    const port = divider > -1 ? hostPort.slice(divider + 1) : '';
+    const credential = parts[2] || '';
+    const user = type === 'redis' ? '-' : credential.split(':')[0] || '-';
+    return { Index: index + 1, Type: type, Host: host || '-', Port: port || '-', User: user, Raw: line };
   }
 
   function proxyLabel(request: ScanRequest) {
@@ -1020,16 +1058,24 @@
   }
 
   function demoTask(status: string): GUITask {
-    const request = { ...fallbackDefaults, User: 'root', Password: 'encrypted-demo', Database: 'audit_lab' };
+    const fscanText = [
+      'mysql 127.0.0.1:3306 root:demo',
+      'postgres 127.0.0.1:5432 audit:demo',
+      'redis 127.0.0.1:6379 demo',
+      'mssql 127.0.0.1:1433 sa:demo',
+      'oracle 127.0.0.1:1521 system:demo'
+    ].join('\n');
+    const request = { ...fallbackDefaults, User: 'root', Password: 'encrypted-demo', Database: 'audit_lab', FscanText: status === 'completed' ? '' : fscanText };
+    const kind: TaskKind = status === 'completed' ? 'single' : 'fscan';
     return {
       ID: `demo-${status}`,
       Name: status === 'completed' ? '客户数据敏感字段审计' : '新建数据库扫描任务',
       Description: status === 'completed' ? '验证 access_tokens 与 customer_profile 中的密码、手机号、邮箱字段。' : '填写任务详情后设置扫描目标。',
-      Kind: status === 'completed' ? 'single' : 'fscan',
+      Kind: kind,
       Status: status,
       Progress: status === 'completed' ? 100 : 0,
       Message: status === 'completed' ? '浏览器预览：任务完成' : '等待配置目标',
-      TargetLabel: targetLabel(request, 'single'),
+      TargetLabel: targetLabel(request, kind),
       Request: request,
       State: demoState(status, request),
       CreatedAt: new Date().toISOString(),
@@ -1272,7 +1318,29 @@
                 </div>
                 <span class:running={task.Status === 'running'} class:completed={task.Status === 'completed'} class:failed={task.Status === 'failed'} class="status-pill">{statusLabel(task.Status)}</span>
                 <div class="task-progress">
-                  <span>{kindLabel(task.Kind)} · {task.TargetLabel || targetLabel(task.Request, task.Kind)}</span>
+                  {#if task.Kind === 'fscan'}
+                    <button class="target-summary-button" on:click={() => toggleTargetPopover(task.ID)}>{taskTargetSummary(task)}</button>
+                    {#if activeTargetPopoverID === task.ID}
+                      <aside class="target-popover">
+                        <div class="target-popover-head">
+                          <strong>目标详情</strong>
+                          <button on:click={() => (activeTargetPopoverID = '')}>关闭</button>
+                        </div>
+                        {#each multiTargetItems(task.Request) as target}
+                          <div class="target-popover-row">
+                            <span>{target.Index}</span>
+                            <strong>{target.Type}</strong>
+                            <em>{target.Host}{target.Port ? `:${target.Port}` : ''}</em>
+                            <code>{target.User}</code>
+                          </div>
+                        {:else}
+                          <p>暂无目标详情，进入配置页加载 fscan 文件或手工目标。</p>
+                        {/each}
+                      </aside>
+                    {/if}
+                  {:else}
+                    <span>{taskTargetSummary(task)}</span>
+                  {/if}
                   <span class="proxy-line">{proxyLabel(task.Request)}</span>
                   <div class="task-risk-row">
                     {#if riskTotals(task.State?.Result?.Tables ?? []).high || riskTotals(task.State?.Result?.Tables ?? []).medium || riskTotals(task.State?.Result?.Tables ?? []).low}
