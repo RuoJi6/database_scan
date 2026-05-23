@@ -887,7 +887,17 @@
 
   function manualTargetsFromText(text: string) {
     if (!text.trim()) return [createManualTarget()];
-    return text.split('\n').filter(Boolean).map(() => createManualTarget());
+    const targets = parseTargetLines(text).filter((target) => target.Type !== 'fscan 文件');
+    if (!targets.length) return [createManualTarget()];
+    return targets.map((target) => ({
+      ID: manualSeq++,
+      Type: target.Type || 'mysql',
+      Host: target.Host === '-' ? '' : target.Host,
+      Port: Number(target.Port) || defaultPorts[target.Type] || 3306,
+      User: target.Type === 'redis' || target.User === '-' ? '' : target.User,
+      Password: target.Password || '',
+      ShowPassword: false
+    }));
   }
 
   function filterTables(tables: TableResult[], fieldQuery: string, risk: string) {
