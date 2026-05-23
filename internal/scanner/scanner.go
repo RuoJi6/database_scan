@@ -13,6 +13,7 @@ import (
 
 	"database_scan/internal/db"
 	"database_scan/internal/detector"
+	"database_scan/internal/textfix"
 )
 
 type Mode string
@@ -33,6 +34,7 @@ type Options struct {
 	Mask          bool
 	IncludeSystem bool
 	Table         string
+	TextEncoding  string
 	Progress      io.Writer
 	OnTable       func(TableResult)
 }
@@ -86,6 +88,23 @@ type FieldResult struct {
 
 type RowSample struct {
 	Values map[string]string
+}
+
+func RepairResultText(result *Result, textEncoding ...string) {
+	encodingName := textfix.EncodingAuto
+	if len(textEncoding) > 0 {
+		encodingName = textEncoding[0]
+	}
+	for i := range result.Samples {
+		result.Samples[i].Value = textfix.RepairString(result.Samples[i].Value, encodingName)
+	}
+	for i := range result.Tables {
+		for j := range result.Tables[i].Rows {
+			for key, value := range result.Tables[i].Rows[j].Values {
+				result.Tables[i].Rows[j].Values[key] = textfix.RepairString(value, encodingName)
+			}
+		}
+	}
 }
 
 type Finding struct {
@@ -635,7 +654,7 @@ func queryNonEmpty(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col d
 		return 0, nil, err
 	}
 	defer rows.Close()
-	values, err := scanRowStrings(rows)
+	values, err := scanRowStrings(rows, opts.TextEncoding)
 	return total, values, err
 }
 
@@ -691,7 +710,7 @@ func querySampleRows(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, sel
 		sample := RowSample{Values: map[string]string{}}
 		for i, name := range names {
 			if values[i].Valid {
-				value := values[i].String
+				value := textfix.RepairString(values[i].String, opts.TextEncoding)
 				if opts.Mask {
 					if kinds := sensitiveByColumn[name]; len(kinds) > 0 {
 						value = detector.Mask(kinds[0], value)
@@ -714,10 +733,10 @@ func queryContent(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db
 		return nil, err
 	}
 	defer rows.Close()
-	return scanRowStrings(rows)
+	return scanRowStrings(rows, opts.TextEncoding)
 }
 
-func scanRowStrings(rows *sql.Rows) ([]string, error) {
+func scanRowStrings(rows *sql.Rows, textEncoding string) ([]string, error) {
 	var values []string
 	for rows.Next() {
 		var v sql.NullString
@@ -725,7 +744,7 @@ func scanRowStrings(rows *sql.Rows) ([]string, error) {
 			return nil, err
 		}
 		if v.Valid {
-			values = append(values, v.String)
+			values = append(values, textfix.RepairString(v.String, textEncoding))
 		}
 	}
 	return values, rows.Err()

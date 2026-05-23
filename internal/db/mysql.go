@@ -67,6 +67,9 @@ func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer
 	mcfg.Timeout = cfg.Timeout
 	mcfg.ReadTimeout = cfg.Timeout
 	mcfg.WriteTimeout = cfg.Timeout
+	if err := mcfg.Apply(mysql.Charset("utf8mb4", "")); err != nil {
+		return nil, err
+	}
 	connector, err := mysql.NewConnector(mcfg)
 	if err != nil {
 		return nil, err

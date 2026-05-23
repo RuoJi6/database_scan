@@ -21,6 +21,7 @@ import (
 	iproxy "database_scan/internal/proxy"
 	redisscan "database_scan/internal/redis"
 	"database_scan/internal/scanner"
+	"database_scan/internal/textfix"
 )
 
 func Run(ctx context.Context, args []string) error {
@@ -187,6 +188,7 @@ func runSingle(ctx context.Context, cfg Config) error {
 	result := scanner.Scan(scanCtx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
 		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: progressWriter,
+		TextEncoding: cfg.TextEncoding,
 		OnTable: func(table scanner.TableResult) {
 			partialMu.Lock()
 			partial.Tables = append(partial.Tables, table)
@@ -292,7 +294,7 @@ func scanRedisTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
 	}
 	info, result, err := redisscan.Scan(ctx, redisscan.Config{
 		Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password, Database: cfg.Database, Proxy: cfg.Proxy,
-		Timeout: cfg.Timeout, Limit: cfg.Limit, Level: cfg.Level, Mask: cfg.Mask, Progress: progressWriter,
+		Timeout: cfg.Timeout, Limit: cfg.Limit, Level: cfg.Level, Mask: cfg.Mask, TextEncoding: cfg.TextEncoding, Progress: progressWriter,
 	})
 	if err != nil {
 		return scanner.Result{}, err
@@ -409,7 +411,7 @@ func scanTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
 	}
 	result := scanner.Scan(ctx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
-		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, Progress: progressWriter,
+		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table, TextEncoding: cfg.TextEncoding, Progress: progressWriter,
 	}, reconnect)
 	return result, nil
 }
@@ -600,7 +602,7 @@ func blank(s string) string {
 
 func runCustomSQL(ctx context.Context, conn *sql.DB, cfg Config) error {
 	output.Section(os.Stdout, "自定义SQL")
-	result, err := executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout)
+	result, err := executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout, cfg.TextEncoding)
 	if err != nil {
 		return err
 	}
@@ -614,12 +616,16 @@ func runCustomSQL(ctx context.Context, conn *sql.DB, cfg Config) error {
 }
 
 func stringify(v any) string {
+	return stringifyWithEncoding(v, textfix.EncodingAuto)
+}
+
+func stringifyWithEncoding(v any, textEncoding string) string {
 	switch x := v.(type) {
 	case nil:
 		return "NULL"
 	case []byte:
-		return string(x)
+		return textfix.RepairBytes(x, textEncoding)
 	default:
-		return fmt.Sprint(x)
+		return textfix.RepairString(fmt.Sprint(x), textEncoding)
 	}
 }

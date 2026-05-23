@@ -17,6 +17,7 @@ import (
 	iproxy "database_scan/internal/proxy"
 	redisscan "database_scan/internal/redis"
 	"database_scan/internal/scanner"
+	"database_scan/internal/textfix"
 )
 
 type ScanRequest struct {
@@ -38,6 +39,7 @@ type ScanRequest struct {
 	SplitOutput   bool
 	IncludeSystem bool
 	Mask          bool
+	TextEncoding  string
 	Workers       int
 	Timeout       string
 }
@@ -112,12 +114,13 @@ type FscanTargetPreview struct {
 
 func DefaultScanRequest() ScanRequest {
 	return ScanRequest{
-		Type:    "mysql",
-		Mode:    string(scanner.FieldContent),
-		Level:   string(detector.LevelAll),
-		Limit:   15,
-		Workers: 1,
-		Timeout: "15s",
+		Type:         "mysql",
+		Mode:         string(scanner.FieldContent),
+		Level:        string(detector.LevelAll),
+		Limit:        15,
+		Workers:      1,
+		Timeout:      "15s",
+		TextEncoding: textfix.EncodingAuto,
 	}
 }
 
@@ -151,6 +154,10 @@ func ValidateScanRequest(req ScanRequest) (Config, error) {
 	if strings.TrimSpace(req.Timeout) == "" {
 		req.Timeout = defaults.Timeout
 	}
+	req.TextEncoding = textfix.NormalizeEncoding(req.TextEncoding)
+	if !textfix.IsSupportedEncoding(req.TextEncoding) {
+		return Config{}, fmt.Errorf("unsupported text encoding %q", req.TextEncoding)
+	}
 
 	level, ok := detector.ParseLevel(req.Level)
 	if !ok {
@@ -179,6 +186,7 @@ func ValidateScanRequest(req ScanRequest) (Config, error) {
 		SplitOutput:   req.SplitOutput,
 		IncludeSystem: req.IncludeSystem,
 		Mask:          req.Mask,
+		TextEncoding:  req.TextEncoding,
 		Workers:       req.Workers,
 		Timeout:       timeout,
 		NoProgress:    true,
@@ -370,7 +378,7 @@ func scanAnyTargetService(ctx context.Context, cfg Config, hooks ServiceHooks, l
 	if cfg.Type == "redis" {
 		redisCfg := redisscan.Config{
 			Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password, Database: cfg.Database, Proxy: cfg.Proxy,
-			Timeout: cfg.Timeout, Limit: cfg.Limit, Level: cfg.Level, Mask: cfg.Mask, Progress: progressLogWriter{log: log},
+			Timeout: cfg.Timeout, Limit: cfg.Limit, Level: cfg.Level, Mask: cfg.Mask, TextEncoding: cfg.TextEncoding, Progress: progressLogWriter{log: log},
 		}
 		info, result, err := scanRedisWithRetry(ctx, redisCfg, log)
 		if err != nil {
@@ -434,7 +442,8 @@ func scanAnyTargetService(ctx context.Context, cfg Config, hooks ServiceHooks, l
 	result := scanner.Scan(ctx, conn, adapter, databases, scanner.Options{
 		Mode: scanner.Mode(cfg.Mode), Limit: cfg.Limit, Workers: cfg.Workers, Timeout: cfg.Timeout,
 		Level: cfg.Level, Mask: cfg.Mask, IncludeSystem: cfg.IncludeSystem, Table: cfg.Table,
-		Progress: progressLogWriter{log: log},
+		TextEncoding: cfg.TextEncoding,
+		Progress:     progressLogWriter{log: log},
 		OnTable: func(table scanner.TableResult) {
 			if hooks.OnTable != nil {
 				hooks.OnTable(table)
@@ -471,7 +480,7 @@ func RunCustomSQL(ctx context.Context, req ScanRequest) (CustomSQLResult, error)
 		return CustomSQLResult{}, fmt.Errorf("connect database: %w", err)
 	}
 	defer conn.Close()
-	return executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout)
+	return executeCustomSQL(ctx, conn, cfg.SQL, cfg.Limit, cfg.Timeout, cfg.TextEncoding)
 }
 
 func TestConnection(ctx context.Context, req ScanRequest) (ConnectionTestResult, error) {
@@ -489,7 +498,7 @@ func TestConnection(ctx context.Context, req ScanRequest) (ConnectionTestResult,
 	if cfg.Type == "redis" {
 		info, err := redisscan.TestConnection(testCtx, redisscan.Config{
 			Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password, Database: cfg.Database, Proxy: cfg.Proxy,
-			Timeout: cfg.Timeout, Limit: 1, Level: cfg.Level, Mask: true,
+			Timeout: cfg.Timeout, Limit: 1, Level: cfg.Level, Mask: true, TextEncoding: cfg.TextEncoding,
 		})
 		if err != nil {
 			return ConnectionTestResult{}, fmt.Errorf("test redis connection: %w", err)
@@ -605,7 +614,7 @@ func shouldRetryConnect(err error) bool {
 	return false
 }
 
-func executeCustomSQL(ctx context.Context, conn *sql.DB, query string, limit int, timeout time.Duration) (CustomSQLResult, error) {
+func executeCustomSQL(ctx context.Context, conn *sql.DB, query string, limit int, timeout time.Duration, textEncoding string) (CustomSQLResult, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if isQuerySQL(query) {
@@ -632,7 +641,7 @@ func executeCustomSQL(ctx context.Context, conn *sql.DB, query string, limit int
 			if len(result.Rows) < limit {
 				row := make([]string, len(cols))
 				for i, v := range values {
-					row[i] = stringify(v)
+					row[i] = stringifyWithEncoding(v, textEncoding)
 				}
 				result.Rows = append(result.Rows, row)
 			}
@@ -715,7 +724,7 @@ func requestFromConfig(cfg Config) ScanRequest {
 		Database: cfg.Database, Table: cfg.Table, Proxy: cfg.Proxy, Mode: cfg.Mode, Level: string(cfg.Level),
 		Limit: cfg.Limit, SQL: cfg.SQL, Output: cfg.Output, Fscan: cfg.Fscan, SplitOutput: cfg.SplitOutput,
 		FscanText:     cfg.FscanText,
-		IncludeSystem: cfg.IncludeSystem, Mask: cfg.Mask, Workers: cfg.Workers, Timeout: cfg.Timeout.String(),
+		IncludeSystem: cfg.IncludeSystem, Mask: cfg.Mask, TextEncoding: cfg.TextEncoding, Workers: cfg.Workers, Timeout: cfg.Timeout.String(),
 	}
 }
 

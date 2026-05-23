@@ -15,22 +15,24 @@ import (
 	"database_scan/internal/detector"
 	iproxy "database_scan/internal/proxy"
 	"database_scan/internal/scanner"
+	"database_scan/internal/textfix"
 )
 
 const maxValueBytes = 4096
 
 type Config struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	Database string
-	Proxy    string
-	Timeout  time.Duration
-	Limit    int
-	Level    detector.Level
-	Mask     bool
-	Progress io.Writer
+	Host         string
+	Port         int
+	User         string
+	Password     string
+	Database     string
+	Proxy        string
+	Timeout      time.Duration
+	Limit        int
+	Level        detector.Level
+	Mask         bool
+	TextEncoding string
+	Progress     io.Writer
 }
 
 type Info struct {
@@ -175,7 +177,7 @@ func scanKeys(ctx context.Context, c *client, cfg Config) ([]string, error) {
 		}
 		if batch, ok := parts[1].([]any); ok {
 			for _, item := range batch {
-				key := fmt.Sprint(item)
+				key := textfix.RepairString(fmt.Sprint(item), cfg.TextEncoding)
 				if key == "" || seen[key] {
 					continue
 				}
@@ -270,34 +272,34 @@ func readKey(c *client, cfg Config, key string) (keyEntry, error) {
 			return entry, err
 		}
 		entry.Path = "value"
-		entry.Value = truncate(fmt.Sprint(value), maxValueBytes)
+		entry.Value = truncate(textfix.RepairString(fmt.Sprint(value), cfg.TextEncoding), maxValueBytes)
 	case "hash":
 		value, err := c.command("HGETALL", key)
 		if err != nil {
 			return entry, err
 		}
-		entry.Path, entry.Value = flattenHash(value)
+		entry.Path, entry.Value = flattenHash(value, cfg.TextEncoding)
 	case "list":
 		value, err := c.command("LRANGE", key, "0", "20")
 		if err != nil {
 			return entry, err
 		}
 		entry.Path = "[0..20]"
-		entry.Value = flattenArray(value)
+		entry.Value = flattenArray(value, cfg.TextEncoding)
 	case "set":
 		value, err := c.command("SSCAN", key, "0", "COUNT", "20")
 		if err != nil {
 			return entry, err
 		}
 		entry.Path = "members"
-		entry.Value = flattenArray(value)
+		entry.Value = flattenArray(value, cfg.TextEncoding)
 	case "zset":
 		value, err := c.command("ZRANGE", key, "0", "20", "WITHSCORES")
 		if err != nil {
 			return entry, err
 		}
 		entry.Path = "members"
-		entry.Value = flattenArray(value)
+		entry.Value = flattenArray(value, cfg.TextEncoding)
 	default:
 		entry.Path = "value"
 		entry.Value = "<unsupported redis type>"
@@ -405,32 +407,32 @@ func keyspaceSummary(values map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
-func flattenArray(v any) string {
+func flattenArray(v any, textEncoding string) string {
 	items, ok := v.([]any)
 	if !ok {
-		return truncate(fmt.Sprint(v), maxValueBytes)
+		return truncate(textfix.RepairString(fmt.Sprint(v), textEncoding), maxValueBytes)
 	}
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
 		if nested, ok := item.([]any); ok {
-			parts = append(parts, flattenArray(nested))
+			parts = append(parts, flattenArray(nested, textEncoding))
 			continue
 		}
-		parts = append(parts, fmt.Sprint(item))
+		parts = append(parts, textfix.RepairString(fmt.Sprint(item), textEncoding))
 	}
 	return truncate(strings.Join(parts, " "), maxValueBytes)
 }
 
-func flattenHash(v any) (string, string) {
+func flattenHash(v any, textEncoding string) (string, string) {
 	items, ok := v.([]any)
 	if !ok {
-		return "fields", truncate(fmt.Sprint(v), maxValueBytes)
+		return "fields", truncate(textfix.RepairString(fmt.Sprint(v), textEncoding), maxValueBytes)
 	}
 	var fields []string
 	var pairs []string
 	for i := 0; i+1 < len(items); i += 2 {
-		field := fmt.Sprint(items[i])
-		value := fmt.Sprint(items[i+1])
+		field := textfix.RepairString(fmt.Sprint(items[i]), textEncoding)
+		value := textfix.RepairString(fmt.Sprint(items[i+1]), textEncoding)
 		fields = append(fields, field)
 		pairs = append(pairs, field+"="+value)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"database_scan/internal/db"
 	"database_scan/internal/detector"
+	"database_scan/internal/textfix"
 
 	"golang.org/x/term"
 )
@@ -44,6 +45,7 @@ type Config struct {
 	SplitOutput    bool
 	IncludeSystem  bool
 	Mask           bool
+	TextEncoding   string
 	TestConnection bool
 	NoColor        bool
 	NoBanner       bool
@@ -53,7 +55,7 @@ type Config struct {
 }
 
 func parseArgs(args []string) (Config, error) {
-	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 1, Timeout: 15 * time.Second}
+	cfg := Config{Mode: "field-content", Level: detector.LevelAll, Limit: 15, Workers: 1, Timeout: 15 * time.Second, TextEncoding: "auto"}
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -75,6 +77,7 @@ func parseArgs(args []string) (Config, error) {
 	fs.BoolVar(&cfg.SplitOutput, "split-output", false, "with --fscan and --output, also write one .xlsx per discovered database credential")
 	fs.BoolVar(&cfg.IncludeSystem, "include-system", false, "include system databases")
 	fs.BoolVar(&cfg.Mask, "mask", false, "mask sensitive sample values")
+	fs.StringVar(&cfg.TextEncoding, "text-encoding", "auto", "repair text encoding: auto, utf8, gbk, gb18030, big5, shift-jis, euc-kr, latin1, windows-1252")
 	fs.BoolVar(&cfg.TestConnection, "test-connection", false, "test database connection, including proxy when --proxy is set, then exit")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "disable colored output")
 	fs.BoolVar(&cfg.NoBanner, "no-banner", false, "disable startup banner")
@@ -105,6 +108,10 @@ func parseArgs(args []string) (Config, error) {
 	}
 	cfg.Type = strings.ToLower(strings.TrimSpace(cfg.Type))
 	cfg.Mode = strings.ToLower(strings.TrimSpace(cfg.Mode))
+	cfg.TextEncoding = textfix.NormalizeEncoding(cfg.TextEncoding)
+	if !textfix.IsSupportedEncoding(cfg.TextEncoding) {
+		return cfg, fmt.Errorf("unsupported --text-encoding %q", cfg.TextEncoding)
+	}
 	parsedLevel, ok := detector.ParseLevel(level)
 	if !ok {
 		return cfg, fmt.Errorf("unsupported --level %q", level)
@@ -219,6 +226,7 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	helpFlag(w, flagName("--limit"), "每张命中表最多展示整行样例数量；默认 15")
 	helpFlag(w, flagName("--workers"), "按表并发扫描数量；默认 1 表示不启用并发")
 	helpFlag(w, flagName("--timeout"), "单查询超时；默认 15s")
+	helpFlag(w, flagName("--text-encoding"), "结果文本编码修复：auto、utf8、gbk、gb18030、big5、shift-jis、euc-kr、latin1、windows-1252")
 	helpFlag(w, flagName("--include-system"), "包含系统库")
 	fmt.Fprintf(w, "\n%s\n", section("Output"))
 	helpFlag(w, flagName("--output"), "写入 Excel 文件；第一个 Sheet 为敏感信息汇总")
@@ -295,7 +303,7 @@ func splitTargetArg(args []string) ([]string, string) {
 	valueFlags := map[string]bool{
 		"type": true, "host": true, "port": true, "user": true, "password": true,
 		"database": true, "table": true, "proxy": true, "mode": true, "level": true, "limit": true, "output": true, "workers": true,
-		"timeout": true, "sql": true,
+		"timeout": true, "sql": true, "text-encoding": true,
 		"fscan": true,
 	}
 	out := make([]string, 0, len(args))

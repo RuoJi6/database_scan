@@ -146,6 +146,7 @@ export namespace app {
 	    SplitOutput: boolean;
 	    IncludeSystem: boolean;
 	    Mask: boolean;
+	    TextEncoding: string;
 	    Workers: number;
 	    Timeout: string;
 
@@ -173,6 +174,7 @@ export namespace app {
 	        this.SplitOutput = source["SplitOutput"];
 	        this.IncludeSystem = source["IncludeSystem"];
 	        this.Mask = source["Mask"];
+	        this.TextEncoding = source["TextEncoding"];
 	        this.Workers = source["Workers"];
 	        this.Timeout = source["Timeout"];
 	    }

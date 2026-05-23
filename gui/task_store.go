@@ -467,6 +467,7 @@ func (v *taskVault) listTasksLocked() ([]GUITask, error) {
 		if err := json.Unmarshal([]byte(raw), &task); err != nil {
 			return nil, err
 		}
+		coreapp.RepairStateText(&task.State)
 		tasks = append(tasks, task)
 	}
 	if tasks == nil {
@@ -488,6 +489,7 @@ func (v *taskVault) getTaskLocked(id string) (GUITask, error) {
 	if err := json.Unmarshal([]byte(raw), &task); err != nil {
 		return GUITask{}, err
 	}
+	coreapp.RepairStateText(&task.State)
 	return task, nil
 }
 

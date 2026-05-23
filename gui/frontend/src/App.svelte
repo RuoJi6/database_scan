@@ -29,6 +29,7 @@
   type TaskKind = 'single' | 'fscan' | 'sql';
   type ViewMode = 'overview' | 'wizard' | 'detail';
   type DetailTab = 'hits' | 'fields' | 'targets' | 'sql' | 'samples' | 'logs';
+  type ThemePreference = 'system' | 'light' | 'dark';
 
   type ScanRequest = {
     Type: string;
@@ -49,6 +50,7 @@
     SplitOutput: boolean;
     IncludeSystem: boolean;
     Mask: boolean;
+    TextEncoding: string;
     Workers: number;
     Timeout: string;
   };
@@ -144,9 +146,22 @@
     SplitOutput: false,
     IncludeSystem: false,
     Mask: false,
+    TextEncoding: 'auto',
     Workers: 1,
     Timeout: '15s'
   };
+
+  const textEncodingOptions = [
+    ['auto', '自动修复'],
+    ['utf8', 'UTF-8'],
+    ['gbk', 'GBK / CP936'],
+    ['gb18030', 'GB18030'],
+    ['big5', 'Big5'],
+    ['shift-jis', 'Shift-JIS'],
+    ['euc-kr', 'EUC-KR'],
+    ['latin1', 'Latin1 / ISO-8859-1'],
+    ['windows-1252', 'Windows-1252']
+  ];
 
   const emptyState: ScanState = {
     JobID: '',
@@ -226,6 +241,11 @@
   let backupError = '';
   let backupResult: BackupResult | undefined;
   let activeTargetPopoverID = '';
+  let themePreference: ThemePreference = 'system';
+  let systemPrefersDark = false;
+  let themeQuery: MediaQueryList | undefined;
+  let copiedTaskID = '';
+  let copyTimer: number | undefined;
 
   $: currentState = selectedTask?.State ?? emptyState;
   $: currentTables = currentState.Result?.Tables ?? [];
@@ -237,6 +257,8 @@
   $: filteredTables = filterTables(currentTables, fieldQuery, riskFilter);
   $: sampleGroups = sampleGroupsFor(currentTables, dataQuery, sampleMetaQuery);
   $: sampleRowTotal = sampleGroups.reduce((total, group) => total + group.Rows.length, 0);
+  $: activeTheme = themePreference === 'system' ? (systemPrefersDark ? 'dark' : 'light') : themePreference;
+  $: applyTheme(activeTheme);
   $: filteredTasks = tasks.filter((task) => {
     const query = taskSearch.trim().toLowerCase();
     if (!query) return true;
@@ -245,6 +267,7 @@
   $: boardStats = taskStats(tasks);
 
   onMount(async () => {
+    initTheme();
     if (!hasWailsRuntime()) {
       defaults = { ...fallbackDefaults };
       vaultStatus = { Initialized: true, Unlocked: true, Path: 'browser-preview' };
@@ -266,7 +289,37 @@
     }
   });
 
-  onDestroy(() => stopPolling());
+  onDestroy(() => {
+    stopPolling();
+    if (copyTimer) window.clearTimeout(copyTimer);
+    if (themeQuery) themeQuery.removeEventListener('change', handleSystemThemeChange);
+  });
+
+  function initTheme() {
+    const saved = window.localStorage.getItem('database-scan-theme') as ThemePreference | null;
+    if (saved === 'light' || saved === 'dark' || saved === 'system') {
+      themePreference = saved;
+    }
+    themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    systemPrefersDark = themeQuery.matches;
+    themeQuery.addEventListener('change', handleSystemThemeChange);
+    applyTheme(themePreference === 'system' ? (systemPrefersDark ? 'dark' : 'light') : themePreference);
+  }
+
+  function handleSystemThemeChange(event: MediaQueryListEvent) {
+    systemPrefersDark = event.matches;
+  }
+
+  function handleThemeChange() {
+    window.localStorage.setItem('database-scan-theme', themePreference);
+    activeTargetPopoverID = '';
+  }
+
+  function applyTheme(theme: 'light' | 'dark') {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }
 
   function hasWailsRuntime() {
     return Boolean((window as any).go?.main?.App);
@@ -980,24 +1033,154 @@
   }
 
   function multiTargetItems(request: ScanRequest) {
-    const lines = (request.FscanText || '').split('\n').map((line) => line.trim()).filter(Boolean);
-    if (lines.length) return lines.map(parseTargetLine);
+    const lines = parseTargetLines(request.FscanText || '');
+    if (lines.length) return lines;
     if (request.Fscan?.trim()) {
-      return [{ Index: 1, Type: 'fscan 文件', Host: request.Fscan.trim(), Port: '', User: '-', Raw: request.Fscan.trim() }];
+      return [{ Index: 1, Type: 'fscan 文件', Host: request.Fscan.trim(), Port: '', User: '-', Password: '', Raw: request.Fscan.trim() }];
     }
     return [];
   }
 
+  function parseTargetLines(text: string) {
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const targets = [];
+    for (let index = 0; index < lines.length; index++) {
+      let parsed = parseTargetLine(lines[index], targets.length);
+      if (!parsed && isManualTargetHeader(lines[index]) && lines[index + 1]) {
+        parsed = parseTargetLine(`${lines[index]} ${lines[index + 1]}`, targets.length);
+        if (parsed) {
+          index++;
+        }
+      }
+      if (parsed) {
+        targets.push(parsed);
+      }
+    }
+    return targets;
+  }
+
+  function isManualTargetHeader(line: string) {
+    const parts = line.split(/\s+/);
+    return parts.length === 2 && isKnownDBType(parts[0]) && Boolean(splitHostPort(parts[1]));
+  }
+
+  function isKnownDBType(value: string) {
+    const type = normalizeTargetType(value);
+    return Boolean(type && (dbTypes.includes(type) || defaultPorts[type] || type === 'redis'));
+  }
+
+  function normalizeTargetType(value: string) {
+    const type = value.toLowerCase().replace(/^[\[\]+:]+|[\[\]+:]+$/g, '');
+    return type === 'postgresql' ? 'postgres' : type;
+  }
+
   function parseTargetLine(line: string, index: number) {
     const parts = line.split(/\s+/);
-    const type = parts[0] || 'db';
-    const hostPort = parts[1] || '';
-    const divider = hostPort.lastIndexOf(':');
-    const host = divider > -1 ? hostPort.slice(0, divider) : hostPort;
-    const port = divider > -1 ? hostPort.slice(divider + 1) : '';
-    const credential = parts[2] || '';
-    const user = type === 'redis' ? '-' : credential.split(':')[0] || '-';
-    return { Index: index + 1, Type: type, Host: host || '-', Port: port || '-', User: user, Raw: line };
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (isKnownDBType(parts[partIndex])) {
+        const type = normalizeTargetType(parts[partIndex]);
+        const hostPort = splitHostPort(parts[partIndex + 1] || '');
+        if (hostPort) {
+          const parsedCredential = splitCredential(parts[partIndex + 2] || '', type);
+          if (parsedCredential || type === 'redis') {
+            return targetFromParts(index, type, hostPort.host, hostPort.port, parsedCredential?.user || '', parsedCredential?.password || '', line);
+          }
+        }
+        const oldTarget = splitOldHostUser(parts[partIndex + 1] || '');
+        if (oldTarget && parts[partIndex + 2] !== undefined) {
+          return targetFromParts(index, type, oldTarget.host, oldTarget.port, oldTarget.user, parts[partIndex + 2], line);
+        }
+      }
+      const savedHostPort = splitHostPort(parts[partIndex]);
+      if (savedHostPort && isKnownDBType(parts[partIndex + 1] || '')) {
+        const type = normalizeTargetType(parts[partIndex + 1]);
+        const parsedCredential = splitCredential(parts[partIndex + 2] || '', type);
+        if (parsedCredential || type === 'redis') {
+          return targetFromParts(index, type, savedHostPort.host, savedHostPort.port, parsedCredential?.user || '', parsedCredential?.password || '', line);
+        }
+      }
+    }
+    return null;
+  }
+
+  function splitHostPort(value: string) {
+    const divider = value.lastIndexOf(':');
+    if (divider <= 0 || divider === value.length - 1) return null;
+    const host = value.slice(0, divider).replace(/^\[|\]$/g, '');
+    const port = value.slice(divider + 1);
+    if (!host || !/^\d+$/.test(port)) return null;
+    return { host, port };
+  }
+
+  function splitCredential(value: string, type: string) {
+    if (!value && type === 'redis') return { user: '', password: '' };
+    const divider = value.includes(':') ? value.indexOf(':') : value.indexOf('/');
+    if (divider < 0) return type === 'redis' && value ? { user: '', password: value } : null;
+    const user = value.slice(0, divider);
+    const password = value.slice(divider + 1);
+    if (!user && type !== 'redis') return null;
+    return type === 'redis' && user.toLowerCase() === 'root' ? { user: '', password } : { user, password };
+  }
+
+  function splitOldHostUser(value: string) {
+    const parts = value.split(':');
+    if (parts.length < 3) return null;
+    const user = parts[parts.length - 1];
+    const port = parts[parts.length - 2];
+    const host = parts.slice(0, -2).join(':').replace(/^\[|\]$/g, '');
+    if (!host || !user || !/^\d+$/.test(port)) return null;
+    return { host, port, user };
+  }
+
+  function targetFromParts(index: number, type: string, host: string, port: string, user: string, password: string, raw: string) {
+    return { Index: index + 1, Type: type, Host: host || '-', Port: port || '-', User: type === 'redis' ? '-' : user || '-', Password: password || '', Raw: raw };
+  }
+
+  function connectionLinesForTask(task: GUITask) {
+    if (task.Kind === 'fscan') {
+      const targets = multiTargetItems(task.Request).filter((target) => target.Type !== 'fscan 文件');
+      if (targets.length) return targets.map(connectionLineFromTarget);
+    }
+    return [connectionLineFromRequest(task.Request)];
+  }
+
+  function connectionLineFromTarget(target: { Type: string; Host: string; Port: string; User: string; Password: string }) {
+    const auth = target.Type === 'redis' ? target.Password || '-' : `${target.User || '-'}/${target.Password || '-'}`;
+    return `${target.Type} ${target.Host}:${target.Port || '-'} ${auth}`;
+  }
+
+  function connectionLineFromRequest(request: ScanRequest) {
+    const type = request.Type || 'db';
+    const host = request.Host || '-';
+    const port = request.Port || '-';
+    const auth = type === 'redis' ? request.Password || '-' : `${request.User || '-'}/${request.Password || '-'}`;
+    return `${type} ${host}:${port} ${auth}`;
+  }
+
+  async function copyTaskConnections(task: GUITask) {
+    const text = connectionLinesForTask(task).join('\n');
+    await copyText(text);
+    copiedTaskID = task.ID;
+    if (copyTimer) window.clearTimeout(copyTimer);
+    copyTimer = window.setTimeout(() => {
+      if (copiedTaskID === task.ID) copiedTaskID = '';
+    }, 1600);
+  }
+
+  async function copyText(text: string) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    textarea.remove();
   }
 
   function proxyLabel(request: ScanRequest) {
@@ -1023,6 +1206,10 @@
 
   function levelLabel(level: string) {
     return ({ high: '高敏', medium: '中敏', low: '低敏', all: '全部' } as Record<string, string>)[level] ?? level;
+  }
+
+  function encodingLabel(encoding: string) {
+    return textEncodingOptions.find(([value]) => value === (encoding || 'auto'))?.[1] ?? encoding;
   }
 
   function fieldLevel(field: FieldResult) {
@@ -1169,6 +1356,14 @@
   <main class="auth-shell">
     <section class="auth-card">
       <div class="brand-lock">DB</div>
+      <label class="theme-select auth-theme">
+        <span>主题</span>
+        <select bind:value={themePreference} on:change={handleThemeChange}>
+          <option value="system">跟随系统</option>
+          <option value="light">白色</option>
+          <option value="dark">黑色</option>
+        </select>
+      </label>
       <h1>{vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
       <p>任务配置、数据库密码和扫描结果会写入本地 SQLCipher 加密数据库。</p>
       <label>
@@ -1206,6 +1401,14 @@
         <input bind:value={taskSearch} placeholder="搜索任务名称、详情或目标" />
       </label>
       <div class="topbar-actions">
+        <label class="theme-select">
+          <span>主题</span>
+          <select bind:value={themePreference} on:change={handleThemeChange}>
+            <option value="system">跟随系统</option>
+            <option value="light">白色</option>
+            <option value="dark">黑色</option>
+          </select>
+        </label>
         <button on:click={toggleDataManager}>数据管理</button>
         <button class="primary" on:click={openNewTask}>新建任务</button>
       </div>
@@ -1354,6 +1557,7 @@
                   <div class="progress-line"><i style={`width: ${Math.max(0, Math.min(100, task.Progress || task.State?.Progress || 0))}%`}></i></div>
                 </div>
                 <div class="task-actions">
+                  <button class:copied={copiedTaskID === task.ID} on:click|stopPropagation={() => copyTaskConnections(task)}>{copiedTaskID === task.ID ? '已复制' : '复制'}</button>
                   <button on:click={() => editTask(task)} disabled={task.Status === 'running'}>配置</button>
                   <button on:click={() => viewTask(task)}>详情</button>
                   <button class="primary" on:click={() => startTask(task)} disabled={task.Status === 'running'}>开始</button>
@@ -1558,6 +1762,12 @@
                 <input bind:value={draftRequest.Timeout} />
               </label>
               <label>
+                <span>内容编码</span>
+                <select bind:value={draftRequest.TextEncoding}>
+                  {#each textEncodingOptions as [value, label]}<option value={value}>{label}</option>{/each}
+                </select>
+              </label>
+              <label>
                 <span>Excel 输出</span>
                 <div class="inline-controls">
                   <input bind:value={draftRequest.Output} placeholder="/tmp/database_scan_report.xlsx" />
@@ -1572,7 +1782,7 @@
             </div>
             <div class="summary-strip">
               <strong>{draftName || '未命名任务'}</strong>
-              <span>{kindLabel(draftKind)} · {modeLabel(draftRequest.Mode)} / {levelLabel(draftRequest.Level)}</span>
+              <span>{kindLabel(draftKind)} · {modeLabel(draftRequest.Mode)} / {levelLabel(draftRequest.Level)} / {encodingLabel(draftRequest.TextEncoding)}</span>
               <span>{targetLabel(requestForKind(), draftKind)}</span>
             </div>
           {/if}
@@ -1598,6 +1808,7 @@
             <p>{selectedTask.Description || '未填写任务详情'}</p>
           </div>
           <div class="detail-actions">
+            <button class:copied={copiedTaskID === selectedTask.ID} on:click={() => copyTaskConnections(selectedTask)}>{copiedTaskID === selectedTask.ID ? '已复制' : '复制连接'}</button>
             <button on:click={() => editTask(selectedTask)} disabled={selectedTask.Status === 'running'}>配置</button>
             {#if selectedTask.Status === 'running'}
               <button on:click={() => stopTask()}>停止</button>
@@ -1633,6 +1844,7 @@
             <div><span>创建时间</span><strong>{formatTime(selectedTask.CreatedAt)}</strong></div>
             <div><span>更新时间</span><strong>{formatTime(selectedTask.UpdatedAt)}</strong></div>
             <div><span>扫描模式</span><strong>{modeLabel(selectedTask.Request.Mode)}</strong></div>
+            <div><span>内容编码</span><strong>{encodingLabel(selectedTask.Request.TextEncoding)}</strong></div>
             <div><span>代理</span><strong>{proxyLabel(selectedTask.Request).replace(/^代理\s*/, '')}</strong></div>
             <div class="output-info">
               <span>输出文件</span>
