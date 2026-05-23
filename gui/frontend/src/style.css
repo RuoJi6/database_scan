@@ -234,6 +234,33 @@ label span,
   justify-content: flex-end;
 }
 
+.auth-progress {
+  display: grid;
+  gap: 9px;
+  border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line));
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--blue) 7%, var(--panel));
+}
+
+.auth-progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.auth-progress span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.auth-progress strong {
+  color: var(--blue);
+  font-size: 13px;
+}
+
 .platform-shell {
   min-height: 100vh;
   display: grid;

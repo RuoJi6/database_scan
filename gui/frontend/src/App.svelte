@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import {
     ChooseBackupExportPath,
     ChooseBackupImportFile,
@@ -203,6 +203,9 @@
   let password = '';
   let confirmPassword = '';
   let authError = '';
+  let authBusy = false;
+  let authProgress = 0;
+  let authStage = '';
   let loading = true;
   let viewMode: ViewMode = 'overview';
   let tasks: GUITask[] = [];
@@ -341,12 +344,25 @@
     return Boolean((window as any).go?.main?.App);
   }
 
+  async function setAuthProgress(progress: number, stage: string) {
+    authProgress = Math.max(authProgress, progress);
+    authStage = stage;
+    await tick();
+  }
+
+  function resetAuthProgress() {
+    authBusy = false;
+    authProgress = 0;
+    authStage = '';
+  }
+
   async function callTestConnection(request: ScanRequest) {
     if (hasWailsRuntime()) return TestConnection(request);
     return demoConnection(request);
   }
 
   async function setupVault() {
+    if (authBusy) return;
     authError = '';
     if (password.length < 6) {
       authError = '启动密码至少 6 位';
@@ -356,25 +372,46 @@
       authError = '两次输入的密码不一致';
       return;
     }
-    vaultStatus = await SetupVault(password);
-    password = '';
-    confirmPassword = '';
-    await loadTasks();
+    authBusy = true;
+    authProgress = 0;
+    try {
+      await setAuthProgress(12, '创建本地加密任务库');
+      vaultStatus = await SetupVault(password);
+      password = '';
+      confirmPassword = '';
+      await setAuthProgress(48, '打开 SQLCipher 数据库');
+      await loadTasks(true);
+      await setAuthProgress(100, '进入任务工作台');
+    } catch (error) {
+      authError = normalizeError(error);
+      resetAuthProgress();
+      return;
+    }
+    resetAuthProgress();
   }
 
   async function unlockVault() {
+    if (authBusy) return;
     authError = '';
     if (!password) {
       authError = '请输入启动密码';
       return;
     }
+    authBusy = true;
+    authProgress = 0;
     try {
+      await setAuthProgress(12, '校验启动密码');
       vaultStatus = await UnlockVault(password);
       password = '';
-      await loadTasks();
+      await setAuthProgress(48, '打开加密任务库');
+      await loadTasks(true);
+      await setAuthProgress(100, '进入任务工作台');
     } catch (error) {
       authError = normalizeError(error);
+      resetAuthProgress();
+      return;
     }
+    resetAuthProgress();
   }
 
   async function resetVault() {
@@ -391,11 +428,14 @@
     confirmPassword = '';
   }
 
-  async function loadTasks() {
+  async function loadTasks(withProgress = false) {
     if (!hasWailsRuntime()) return;
+    if (withProgress) await setAuthProgress(64, '读取历史任务');
     tasks = (await ListTasks()) as unknown as GUITask[];
+    if (withProgress) await setAuthProgress(82, '恢复任务状态');
     selectedTask = selectedTask ? tasks.find((task) => task.ID === selectedTask?.ID) : tasks[0];
     startPollingIfNeeded();
+    if (withProgress) await setAuthProgress(94, '准备工作台');
   }
 
   function openNewTask() {
@@ -1389,7 +1429,7 @@
       <p>正在载入任务工作台</p>
     </section>
   </main>
-{:else if !vaultStatus.Unlocked}
+{:else if !vaultStatus.Unlocked || authBusy}
   <main class="auth-shell">
     <section class="auth-card">
       <div class="brand-lock">DB</div>
@@ -1412,25 +1452,34 @@
           {/if}
         </div>
       </div>
-      <h1>{vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
-      <p>任务配置、数据库密码和扫描结果会写入本地 SQLCipher 加密数据库。</p>
+      <h1>{authBusy ? '正在载入任务库' : vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
+      <p>{authBusy ? '正在解密本地数据并恢复历史任务，请稍候。' : '任务配置、数据库密码和扫描结果会写入本地 SQLCipher 加密数据库。'}</p>
       <label>
         <span>启动密码</span>
-        <input type="password" bind:value={password} placeholder="输入启动密码" on:keydown={(event) => event.key === 'Enter' && (vaultStatus.Initialized ? unlockVault() : setupVault())} />
+        <input type="password" bind:value={password} placeholder="输入启动密码" disabled={authBusy} on:keydown={(event) => !authBusy && event.key === 'Enter' && (vaultStatus.Initialized ? unlockVault() : setupVault())} />
       </label>
       {#if !vaultStatus.Initialized}
         <label>
           <span>确认密码</span>
-          <input type="password" bind:value={confirmPassword} placeholder="再次输入启动密码" on:keydown={(event) => event.key === 'Enter' && setupVault()} />
+          <input type="password" bind:value={confirmPassword} placeholder="再次输入启动密码" disabled={authBusy} on:keydown={(event) => !authBusy && event.key === 'Enter' && setupVault()} />
         </label>
+      {/if}
+      {#if authBusy}
+        <div class="auth-progress">
+          <div>
+            <span>{authStage || '准备载入'}</span>
+            <strong>{authProgress}%</strong>
+          </div>
+          <div class="progress-line"><i style={`width: ${authProgress}%`}></i></div>
+        </div>
       {/if}
       {#if authError}<p class="error-line">{authError}</p>{/if}
       <div class="auth-actions">
         {#if vaultStatus.Initialized}
-          <button class="primary" on:click={unlockVault}>解锁</button>
-          <button on:click={resetVault}>清空并重置</button>
+          <button class="primary" on:click={unlockVault} disabled={authBusy}>{authBusy ? '载入中' : '解锁'}</button>
+          <button on:click={resetVault} disabled={authBusy}>清空并重置</button>
         {:else}
-          <button class="primary" on:click={setupVault}>创建加密任务库</button>
+          <button class="primary" on:click={setupVault} disabled={authBusy}>{authBusy ? '创建中' : '创建加密任务库'}</button>
         {/if}
       </div>
     </section>
