@@ -30,6 +30,7 @@
   type ViewMode = 'overview' | 'wizard' | 'detail';
   type DetailTab = 'hits' | 'fields' | 'targets' | 'sql' | 'samples' | 'logs';
   type ThemePreference = 'system' | 'light' | 'dark';
+  const themeOptions: ThemePreference[] = ['system', 'light', 'dark'];
 
   type ScanRequest = {
     Type: string;
@@ -241,7 +242,9 @@
   let backupError = '';
   let backupResult: BackupResult | undefined;
   let activeTargetPopoverID = '';
+  let activeDbTypeMenu = '';
   let themePreference: ThemePreference = 'system';
+  let themeMenuOpen = false;
   let systemPrefersDark = false;
   let themeQuery: MediaQueryList | undefined;
   let copiedTaskID = '';
@@ -313,6 +316,19 @@
   function handleThemeChange() {
     window.localStorage.setItem('database-scan-theme', themePreference);
     activeTargetPopoverID = '';
+  }
+
+  function selectTheme(preference: ThemePreference) {
+    themePreference = preference;
+    themeMenuOpen = false;
+    activeDbTypeMenu = '';
+    handleThemeChange();
+  }
+
+  function themeLabel(preference: ThemePreference) {
+    if (preference === 'light') return '白色';
+    if (preference === 'dark') return '黑色';
+    return '跟随系统';
   }
 
   function applyTheme(theme: 'light' | 'dark') {
@@ -829,12 +845,21 @@
     if (draftRequest.Type === 'redis') draftRequest.User = '';
   }
 
-  function changeManualType(index: number) {
-    const target = manualTargets[index];
+  function selectDraftType(type: string) {
+    draftRequest.Type = type;
+    changeDraftType();
+    draftRequest = { ...draftRequest };
+    activeDbTypeMenu = '';
+  }
+
+  function selectManualType(id: number, type: string) {
+    const target = manualTargets.find((item) => item.ID === id);
     if (!target) return;
-    target.Port = defaultPorts[target.Type] ?? target.Port;
-    if (target.Type === 'redis') target.User = '';
+    target.Type = type;
+    target.Port = defaultPorts[type] ?? target.Port;
+    if (type === 'redis') target.User = '';
     manualTargets = [...manualTargets];
+    activeDbTypeMenu = '';
   }
 
   function updateManualPassword(index: number, event: Event) {
@@ -1354,6 +1379,8 @@
 
 </script>
 
+<svelte:window on:click={() => ((themeMenuOpen = false), (activeDbTypeMenu = ''))} on:keydown={(event) => event.key === 'Escape' && ((themeMenuOpen = false), (activeDbTypeMenu = ''))} />
+
 {#if loading}
   <main class="auth-shell">
     <section class="auth-card">
@@ -1366,14 +1393,25 @@
   <main class="auth-shell">
     <section class="auth-card">
       <div class="brand-lock">DB</div>
-      <label class="theme-select auth-theme">
+      <div class="theme-select auth-theme">
         <span>主题</span>
-        <select bind:value={themePreference} on:change={handleThemeChange}>
-          <option value="system">跟随系统</option>
-          <option value="light">白色</option>
-          <option value="dark">黑色</option>
-        </select>
-      </label>
+        <div class="theme-menu-wrap">
+          <button class="theme-trigger" class:open={themeMenuOpen} type="button" on:click|stopPropagation={() => (themeMenuOpen = !themeMenuOpen)} aria-haspopup="listbox" aria-expanded={themeMenuOpen}>
+            <strong>{themeLabel(themePreference)}</strong>
+            <i></i>
+          </button>
+          {#if themeMenuOpen}
+            <div class="theme-menu" role="listbox">
+              {#each themeOptions as option}
+                <button type="button" class:active={themePreference === option} role="option" aria-selected={themePreference === option} on:click={() => selectTheme(option)}>
+                  <span>{themeLabel(option)}</span>
+                  {#if themePreference === option}<em>当前</em>{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
       <h1>{vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
       <p>任务配置、数据库密码和扫描结果会写入本地 SQLCipher 加密数据库。</p>
       <label>
@@ -1411,14 +1449,25 @@
         <input bind:value={taskSearch} placeholder="搜索任务名称、详情或目标" />
       </label>
       <div class="topbar-actions">
-        <label class="theme-select">
+        <div class="theme-select">
           <span>主题</span>
-          <select bind:value={themePreference} on:change={handleThemeChange}>
-            <option value="system">跟随系统</option>
-            <option value="light">白色</option>
-            <option value="dark">黑色</option>
-          </select>
-        </label>
+          <div class="theme-menu-wrap">
+            <button class="theme-trigger" class:open={themeMenuOpen} type="button" on:click|stopPropagation={() => (themeMenuOpen = !themeMenuOpen)} aria-haspopup="listbox" aria-expanded={themeMenuOpen}>
+              <strong>{themeLabel(themePreference)}</strong>
+              <i></i>
+            </button>
+            {#if themeMenuOpen}
+              <div class="theme-menu" role="listbox">
+                {#each themeOptions as option}
+                  <button type="button" class:active={themePreference === option} role="option" aria-selected={themePreference === option} on:click={() => selectTheme(option)}>
+                    <span>{themeLabel(option)}</span>
+                    {#if themePreference === option}<em>当前</em>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
         <button on:click={toggleDataManager}>数据管理</button>
         <button class="primary" on:click={openNewTask}>新建任务</button>
       </div>
@@ -1654,10 +1703,22 @@
                 </div>
                 <div class="manual-table">
                   {#each manualTargets as target, index (target.ID)}
-                    <div class="manual-row">
-                      <select bind:value={target.Type} on:change={() => changeManualType(index)}>
-                        {#each dbTypes as type}<option value={type}>{type}</option>{/each}
-                      </select>
+                    <div class="manual-row" class:menu-open={activeDbTypeMenu === `manual-${target.ID}`}>
+                      <div class="db-type-select">
+                        <button class="db-type-trigger" class:open={activeDbTypeMenu === `manual-${target.ID}`} type="button" on:click|stopPropagation={() => (activeDbTypeMenu = activeDbTypeMenu === `manual-${target.ID}` ? '' : `manual-${target.ID}`)} aria-haspopup="listbox" aria-expanded={activeDbTypeMenu === `manual-${target.ID}`}>
+                          <strong>{target.Type}</strong>
+                          <i></i>
+                        </button>
+                        {#if activeDbTypeMenu === `manual-${target.ID}`}
+                          <div class="db-type-menu" role="listbox">
+                            {#each dbTypes as type}
+                              <button type="button" class:active={target.Type === type} role="option" aria-selected={target.Type === type} on:click={() => selectManualType(target.ID, type)}>
+                                <span>{type}</span>
+                              </button>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
                       <input bind:value={target.Host} placeholder="Host" />
                       <input type="number" bind:value={target.Port} placeholder="端口" />
                       <input bind:value={target.User} placeholder="账号" disabled={target.Type === 'redis'} />
@@ -1686,9 +1747,21 @@
               <div class="form-grid">
                 <label>
                   <span>数据库类型</span>
-                  <select bind:value={draftRequest.Type} on:change={changeDraftType}>
-                    {#each dbTypes as type}<option value={type}>{type}</option>{/each}
-                  </select>
+                  <div class="db-type-select wide">
+                    <button class="db-type-trigger" class:open={activeDbTypeMenu === 'draft'} type="button" on:click|stopPropagation={() => (activeDbTypeMenu = activeDbTypeMenu === 'draft' ? '' : 'draft')} aria-haspopup="listbox" aria-expanded={activeDbTypeMenu === 'draft'}>
+                      <strong>{draftRequest.Type}</strong>
+                      <i></i>
+                    </button>
+                    {#if activeDbTypeMenu === 'draft'}
+                      <div class="db-type-menu" role="listbox">
+                        {#each dbTypes as type}
+                          <button type="button" class:active={draftRequest.Type === type} role="option" aria-selected={draftRequest.Type === type} on:click={() => selectDraftType(type)}>
+                            <span>{type}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
                 </label>
                 <label>
                   <span>Host</span>
