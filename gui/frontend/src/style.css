@@ -1170,6 +1170,10 @@ label span,
   overflow: hidden;
 }
 
+.result-panel.has-field-popover {
+  overflow: visible;
+}
+
 .activity-tabs {
   display: flex;
   gap: 4px;
@@ -1364,13 +1368,24 @@ td.sample-low {
 .field-list {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   transition: padding-right 160ms ease;
+  overflow: visible;
 }
 
 .field-list.has-popover {
-  padding-right: 430px;
+  padding-right: 16px;
+}
+
+.field-card {
+  position: relative;
+  min-width: 0;
+}
+
+.field-card.active {
+  z-index: 8;
 }
 
 .field-row {
+  width: 100%;
   min-height: 82px;
   display: grid;
   align-content: center;
@@ -1414,11 +1429,11 @@ button.field-row.selected {
 
 .field-popover {
   position: absolute;
-  top: 74px;
-  right: 18px;
-  z-index: 5;
+  top: 0;
+  left: calc(100% + 14px);
+  z-index: 12;
   width: 390px;
-  max-height: calc(100% - 96px);
+  max-height: min(460px, calc(100vh - 220px));
   display: grid;
   align-content: start;
   gap: 14px;
@@ -1428,6 +1443,47 @@ button.field-row.selected {
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 22px 50px rgba(31, 45, 61, 0.14);
   overflow: auto;
+}
+
+.field-popover::before,
+.field-popover::after {
+  content: "";
+  position: absolute;
+  top: 28px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
+
+.field-popover::before {
+  left: -10px;
+  border-width: 9px 10px 9px 0;
+  border-color: transparent var(--line) transparent transparent;
+}
+
+.field-popover::after {
+  left: -8px;
+  border-width: 8px 9px 8px 0;
+  border-color: transparent var(--panel) transparent transparent;
+}
+
+.field-card:nth-child(3n) .field-popover {
+  right: calc(100% + 14px);
+  left: auto;
+}
+
+.field-card:nth-child(3n) .field-popover::before {
+  right: -10px;
+  left: auto;
+  border-width: 9px 0 9px 10px;
+  border-color: transparent transparent transparent var(--line);
+}
+
+.field-card:nth-child(3n) .field-popover::after {
+  right: -8px;
+  left: auto;
+  border-width: 8px 0 8px 9px;
+  border-color: transparent transparent transparent var(--panel);
 }
 
 .field-popover.high {
@@ -1845,5 +1901,64 @@ button.field-row.selected {
   .form-grid,
   .field-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .field-card:nth-child(3n) .field-popover {
+    right: auto;
+    left: calc(100% + 14px);
+  }
+
+  .field-card:nth-child(3n) .field-popover::before {
+    right: auto;
+    left: -10px;
+    border-width: 9px 10px 9px 0;
+    border-color: transparent var(--line) transparent transparent;
+  }
+
+  .field-card:nth-child(3n) .field-popover::after {
+    right: auto;
+    left: -8px;
+    border-width: 8px 9px 8px 0;
+    border-color: transparent var(--panel) transparent transparent;
+  }
+
+  .field-card:nth-child(2n) .field-popover {
+    right: calc(100% + 14px);
+    left: auto;
+  }
+
+  .field-card:nth-child(2n) .field-popover::before {
+    right: -10px;
+    left: auto;
+    border-width: 9px 0 9px 10px;
+    border-color: transparent transparent transparent var(--line);
+  }
+
+  .field-card:nth-child(2n) .field-popover::after {
+    right: -8px;
+    left: auto;
+    border-width: 8px 0 8px 9px;
+    border-color: transparent transparent transparent var(--panel);
+  }
+}
+
+@media (max-width: 760px) {
+  .field-list {
+    grid-template-columns: 1fr;
+  }
+
+  .field-card:nth-child(n) .field-popover {
+    position: relative;
+    top: auto;
+    right: auto;
+    left: auto;
+    width: 100%;
+    max-height: none;
+    margin-top: 10px;
+  }
+
+  .field-card:nth-child(n) .field-popover::before,
+  .field-card:nth-child(n) .field-popover::after {
+    display: none;
   }
 }

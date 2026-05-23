@@ -1864,7 +1864,7 @@
           </section>
         </div>
 
-        <section class="result-panel">
+        <section class="result-panel" class:has-field-popover={activeTab === 'fields' && Boolean(selectedEvidence)}>
           <div class="activity-tabs">
             {#each detailTabs(showSQLTab) as tab}
               <button class:active={activeTab === tab[0]} on:click={() => setDetailTab(tab[0])}>{tab[1]}</button>
@@ -1895,44 +1895,46 @@
           {:else if activeTab === 'fields'}
             <div class="field-list" class:has-popover={Boolean(selectedEvidence)}>
               {#each currentEvidence as field}
-                <button class={`field-row ${fieldLevel(field)}`} class:selected={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName} on:click={() => selectEvidenceField(field)}>
-                  <strong>{field.Name}</strong>
-                  <span>{field.Database} / {field.TableName}</span>
-                  <em>{(field.Kinds ?? []).join(' / ')} · {levelLabel(fieldLevel(field))}</em>
-                  <small>命中行数 {field.Total || field.Table.Total || 0}</small>
-                </button>
+                <div class="field-card" class:active={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName}>
+                  <button class={`field-row ${fieldLevel(field)}`} class:selected={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName} on:click={() => selectEvidenceField(field)}>
+                    <strong>{field.Name}</strong>
+                    <span>{field.Database} / {field.TableName}</span>
+                    <em>{(field.Kinds ?? []).join(' / ')} · {levelLabel(fieldLevel(field))}</em>
+                    <small>命中行数 {field.Total || field.Table.Total || 0}</small>
+                  </button>
+                  {#if selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName}
+                    <aside class={`field-popover ${fieldLevel(selectedEvidence)}`}>
+                      <header>
+                        <div>
+                          <span>字段详情</span>
+                          <strong>{selectedEvidence.Name}</strong>
+                        </div>
+                        <button type="button" on:click={() => (selectedEvidence = undefined)}>关闭</button>
+                      </header>
+                      <div class="field-detail-grid">
+                        <div><span>数据库</span><strong>{selectedEvidence.Database}</strong></div>
+                        <div><span>表</span><strong>{selectedEvidence.TableName}</strong></div>
+                        <div><span>风险等级</span><strong>{levelLabel(fieldLevel(selectedEvidence))}</strong></div>
+                        <div><span>命中数量</span><strong>{selectedEvidence.Total || selectedEvidence.Table.Total || 0}</strong></div>
+                        <div><span>命中类型</span><strong>{(selectedEvidence.Kinds ?? []).join(' / ') || '-'}</strong></div>
+                        <div><span>扫描模式</span><strong>{modeLabel(selectedEvidence.Mode)}</strong></div>
+                      </div>
+                      <section class="field-samples">
+                        <div class="field-samples-heading">
+                          <span>样例值</span>
+                          <strong>{fieldSampleValues(selectedEvidence).length} values</strong>
+                        </div>
+                        {#each fieldSampleValues(selectedEvidence) as sample}
+                          <code><span>#{sample.Index}</span>{sample.Value}</code>
+                        {:else}
+                          <p>暂无样例值</p>
+                        {/each}
+                      </section>
+                    </aside>
+                  {/if}
+                </div>
               {/each}
             </div>
-            {#if selectedEvidence}
-              <aside class={`field-popover ${fieldLevel(selectedEvidence)}`}>
-                <header>
-                  <div>
-                    <span>字段详情</span>
-                    <strong>{selectedEvidence.Name}</strong>
-                  </div>
-                  <button on:click={() => (selectedEvidence = undefined)}>关闭</button>
-                </header>
-                <div class="field-detail-grid">
-                  <div><span>数据库</span><strong>{selectedEvidence.Database}</strong></div>
-                  <div><span>表</span><strong>{selectedEvidence.TableName}</strong></div>
-                  <div><span>风险等级</span><strong>{levelLabel(fieldLevel(selectedEvidence))}</strong></div>
-                  <div><span>命中数量</span><strong>{selectedEvidence.Total || selectedEvidence.Table.Total || 0}</strong></div>
-                  <div><span>命中类型</span><strong>{(selectedEvidence.Kinds ?? []).join(' / ') || '-'}</strong></div>
-                  <div><span>扫描模式</span><strong>{modeLabel(selectedEvidence.Mode)}</strong></div>
-                </div>
-                <section class="field-samples">
-                  <div class="field-samples-heading">
-                    <span>样例值</span>
-                    <strong>{fieldSampleValues(selectedEvidence).length} values</strong>
-                  </div>
-                  {#each fieldSampleValues(selectedEvidence) as sample}
-                    <code><span>#{sample.Index}</span>{sample.Value}</code>
-                  {:else}
-                    <p>暂无样例值</p>
-                  {/each}
-                </section>
-              </aside>
-            {/if}
           {:else if activeTab === 'targets'}
             <div class="target-list">
               {#if selectedTask.Kind === 'fscan'}
