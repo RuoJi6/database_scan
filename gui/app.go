@@ -29,7 +29,7 @@ type App struct {
 func NewApp() *App {
 	vault, err := newTaskVault()
 	if err != nil {
-		vault = &taskVault{path: filepath.Join(".", "database_scan", "tasks.enc")}
+		vault = &taskVault{path: filepath.Join(".", "database_scan", "database_scan.db")}
 	}
 	return &App{
 		vault:       vault,
@@ -95,6 +95,40 @@ func (a *App) DeleteTask(id string) error {
 	}
 	a.mu.Unlock()
 	return a.vault.deleteTask(id)
+}
+
+func (a *App) ChooseBackupExportPath() (string, error) {
+	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出数据备份",
+		DefaultFilename: "database_scan_backup.dbsbak",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Database Scan Backup", Pattern: "*.dbsbak"},
+		},
+	})
+}
+
+func (a *App) ChooseBackupImportFile() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "导入数据备份",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Database Scan Backup", Pattern: "*.dbsbak"},
+			{DisplayName: "All Files", Pattern: "*"},
+		},
+	})
+}
+
+func (a *App) ExportDataBackup(req BackupExportRequest) (BackupResult, error) {
+	return a.vault.exportBackup(req)
+}
+
+func (a *App) ImportDataBackup(req BackupImportRequest) (BackupResult, error) {
+	a.mu.Lock()
+	running := len(a.runtimes)
+	a.mu.Unlock()
+	if running > 0 {
+		return BackupResult{}, fmt.Errorf("请先停止或等待运行中的任务结束，再导入备份")
+	}
+	return a.vault.importBackup(req)
 }
 
 func (a *App) GetTask(id string) (GUITask, error) {

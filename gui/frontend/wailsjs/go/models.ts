@@ -238,8 +238,97 @@ export namespace app {
 
 }
 
+export namespace db {
+
+	export class ServerInfo {
+	    Host: string;
+	    Port: number;
+	    DBType: string;
+	    Version: string;
+	    CurrentUser: string;
+	    CurrentDB: string;
+	    ServerTime: string;
+	    Environment: Record<string, string>;
+	    ResolvedAddr: string;
+	    Proxy: string;
+	    IncludeSystem: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ServerInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
+	        this.Port = source["Port"];
+	        this.DBType = source["DBType"];
+	        this.Version = source["Version"];
+	        this.CurrentUser = source["CurrentUser"];
+	        this.CurrentDB = source["CurrentDB"];
+	        this.ServerTime = source["ServerTime"];
+	        this.Environment = source["Environment"];
+	        this.ResolvedAddr = source["ResolvedAddr"];
+	        this.Proxy = source["Proxy"];
+	        this.IncludeSystem = source["IncludeSystem"];
+	    }
+	}
+
+}
+
 export namespace main {
 
+	export class BackupExportRequest {
+	    Path: string;
+	    Encrypt: boolean;
+	    Password: string;
+
+	    static createFrom(source: any = {}) {
+	        return new BackupExportRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Path = source["Path"];
+	        this.Encrypt = source["Encrypt"];
+	        this.Password = source["Password"];
+	    }
+	}
+	export class BackupImportRequest {
+	    Path: string;
+	    Password: string;
+
+	    static createFrom(source: any = {}) {
+	        return new BackupImportRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Path = source["Path"];
+	        this.Password = source["Password"];
+	    }
+	}
+	export class BackupResult {
+	    Path: string;
+	    Encrypted: boolean;
+	    ExportedTasks: number;
+	    ImportedTasks: number;
+	    RenamedTasks: number;
+	    Message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new BackupResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Path = source["Path"];
+	        this.Encrypted = source["Encrypted"];
+	        this.ExportedTasks = source["ExportedTasks"];
+	        this.ImportedTasks = source["ImportedTasks"];
+	        this.RenamedTasks = source["RenamedTasks"];
+	        this.Message = source["Message"];
+	    }
+	}
 	export class CreateTaskRequest {
 	    Name: string;
 	    Description: string;
@@ -384,43 +473,6 @@ export namespace main {
 	        this.Initialized = source["Initialized"];
 	        this.Unlocked = source["Unlocked"];
 	        this.Path = source["Path"];
-	    }
-	}
-
-}
-
-export namespace db {
-
-	export class ServerInfo {
-	    Host: string;
-	    Port: number;
-	    DBType: string;
-	    Version: string;
-	    CurrentUser: string;
-	    CurrentDB: string;
-	    ServerTime: string;
-	    Environment: Record<string, string>;
-	    ResolvedAddr: string;
-	    Proxy: string;
-	    IncludeSystem: boolean;
-
-	    static createFrom(source: any = {}) {
-	        return new ServerInfo(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Host = source["Host"];
-	        this.Port = source["Port"];
-	        this.DBType = source["DBType"];
-	        this.Version = source["Version"];
-	        this.CurrentUser = source["CurrentUser"];
-	        this.CurrentDB = source["CurrentDB"];
-	        this.ServerTime = source["ServerTime"];
-	        this.Environment = source["Environment"];
-	        this.ResolvedAddr = source["ResolvedAddr"];
-	        this.Proxy = source["Proxy"];
-	        this.IncludeSystem = source["IncludeSystem"];
 	    }
 	}
 

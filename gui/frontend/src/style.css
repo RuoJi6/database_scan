@@ -199,13 +199,21 @@ label span,
 
 .app-topbar {
   display: grid;
-  grid-template-columns: 260px minmax(360px, 760px) 130px;
+  grid-template-columns: 260px minmax(360px, 760px) auto;
   align-items: center;
   justify-content: center;
   gap: 22px;
   padding: 16px 26px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
+}
+
+.topbar-actions,
+.hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .brand-block {
@@ -287,6 +295,113 @@ label span,
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.data-manager {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgba(31, 45, 61, 0.035);
+}
+
+.vault-path {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.vault-path span,
+.backup-card p,
+.backup-result span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vault-path code {
+  overflow: hidden;
+  color: #334155;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.backup-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfe;
+}
+
+.backup-card button.primary,
+.backup-card > button {
+  justify-self: start;
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-check input {
+  width: auto;
+  height: auto;
+}
+
+.warning-line {
+  border: 1px solid #ffe1ad;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #9b6500;
+  background: #fffaf0;
+  font-size: 12px;
+}
+
+.data-manager .error-line {
+  margin: 0 16px 16px;
+}
+
+.backup-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 16px;
+  border: 1px solid #cfe4ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7fbff;
+}
+
+.backup-result strong {
+  color: #145cb8;
+  font-size: 13px;
+}
+
+.backup-result span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-result em {
+  color: #4f5966;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .stat-grid {
@@ -383,7 +498,23 @@ label span,
 .task-progress {
   min-width: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+}
+
+.task-progress .proxy-line {
+  color: #596270;
+  font-size: 12px;
+}
+
+.task-progress .proxy-line::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #8aa4c5;
+  vertical-align: 1px;
 }
 
 .task-risk-row {
@@ -774,8 +905,15 @@ label span,
   line-height: 1;
 }
 
+.overview-risk-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 .overview-panel .progress-line {
-  margin-top: 24px;
+  margin-top: 14px;
 }
 
 .overview-foot {
@@ -882,10 +1020,24 @@ label span,
 
 .table-tools {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) 100px 110px;
+  grid-template-columns: minmax(260px, 1fr) 130px;
   align-items: end;
   gap: 10px;
   padding: 16px;
+}
+
+.sample-tools {
+  display: grid;
+  grid-template-columns: minmax(240px, 420px) minmax(240px, 420px) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 16px 16px 0;
+}
+
+.sample-tools > span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .result-table-wrap,
@@ -1050,17 +1202,25 @@ button.field-row.selected {
 
 .field-row strong,
 .field-row span,
-.field-row em {
+.field-row em,
+.field-row small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .field-row span,
-.field-row em {
+.field-row em,
+.field-row small {
   color: #6b737e;
   font-size: 11px;
   font-style: normal;
+}
+
+.field-row small {
+  font-weight: 720;
+  color: currentColor;
+  opacity: 0.82;
 }
 
 .field-popover {
@@ -1231,7 +1391,7 @@ button.field-row.selected {
 .sample-group-heading {
   min-height: 42px;
   display: grid;
-  grid-template-columns: minmax(220px, max-content) minmax(260px, max-content);
+  grid-template-columns: minmax(220px, max-content) minmax(260px, max-content) minmax(90px, max-content);
   align-items: center;
   gap: 18px;
   padding: 0 12px;

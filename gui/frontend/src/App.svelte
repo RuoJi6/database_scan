@@ -1,14 +1,18 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import {
+    ChooseBackupExportPath,
+    ChooseBackupImportFile,
     ChooseFscanFile,
     ChooseOutputPath,
     CreateTask,
     DeleteTask,
+    ExportDataBackup,
     GetDefaults,
     GetSupportedDatabaseTypes,
     GetTask,
     GetVaultStatus,
+    ImportDataBackup,
     ListTasks,
     OpenOutputFolder,
     ParseFscanFile,
@@ -52,6 +56,7 @@
   type FieldResult = { Name: string; Kinds: string[]; Level: string; Mode: string; Total: number };
   type EvidenceField = FieldResult & { Database: string; TableName: string; Table: TableResult };
   type RowSample = { Values: Record<string, string> };
+  type SampleGroup = { Table: TableResult; Headers: string[]; Rows: Array<{ Values: Record<string, string> }> };
   type TableResult = {
     Database: string;
     Schema: string;
@@ -95,6 +100,7 @@
     FinishedAt: string;
   };
   type VaultStatus = { Initialized: boolean; Unlocked: boolean; Path: string };
+  type BackupResult = { Path: string; Encrypted: boolean; ExportedTasks: number; ImportedTasks: number; RenamedTasks: number; Message: string };
   type FscanPreview = { Total: number; Targets: Array<{ Type: string; Host: string; Port: number; User: string; Line: number; Raw: string; Password: boolean }> };
   type ConnectionTestResult = {
     Success: boolean;
@@ -199,8 +205,8 @@
   let activeTab: DetailTab = 'hits';
   let selectedEvidence: EvidenceField | undefined;
   let dataQuery = '';
+  let sampleMetaQuery = '';
   let fieldQuery = '';
-  let relation: 'and' | 'or' | 'not' = 'and';
   let riskFilter = 'all';
   let showPassword = false;
   let manualSeq = 1;
@@ -210,6 +216,15 @@
   let testingConnection = false;
   let manualTestingIndex = -1;
   let pollTimer: number | undefined;
+  let showDataManager = false;
+  let backupExportPath = '';
+  let backupEncrypt = true;
+  let backupPassword = '';
+  let backupImportPath = '';
+  let backupImportPassword = '';
+  let backupBusy = false;
+  let backupError = '';
+  let backupResult: BackupResult | undefined;
 
   $: currentState = selectedTask?.State ?? emptyState;
   $: currentTables = currentState.Result?.Tables ?? [];
@@ -218,8 +233,9 @@
   $: outputPath = currentState.Outputs?.[0] || selectedTask?.Request.Output || '';
   $: showSQLTab = shouldShowSQLTab(selectedTask);
   $: if (activeTab === 'sql' && !showSQLTab) activeTab = 'hits';
-  $: filteredTables = filterTables(currentTables, dataQuery, fieldQuery, relation, riskFilter);
-  $: sampleRows = sampleRowsFor(filteredTables.length ? filteredTables : currentTables);
+  $: filteredTables = filterTables(currentTables, fieldQuery, riskFilter);
+  $: sampleGroups = sampleGroupsFor(currentTables, dataQuery, sampleMetaQuery);
+  $: sampleRowTotal = sampleGroups.reduce((total, group) => total + group.Rows.length, 0);
   $: filteredTasks = tasks.filter((task) => {
     const query = taskSearch.trim().toLowerCase();
     if (!query) return true;
@@ -253,6 +269,11 @@
 
   function hasWailsRuntime() {
     return Boolean((window as any).go?.main?.App);
+  }
+
+  async function callTestConnection(request: ScanRequest) {
+    if (hasWailsRuntime()) return TestConnection(request);
+    return demoConnection(request);
   }
 
   async function setupVault() {
@@ -302,7 +323,7 @@
 
   async function loadTasks() {
     if (!hasWailsRuntime()) return;
-    tasks = await ListTasks();
+    tasks = (await ListTasks()) as unknown as GUITask[];
     selectedTask = selectedTask ? tasks.find((task) => task.ID === selectedTask?.ID) : tasks[0];
     startPollingIfNeeded();
   }
@@ -388,10 +409,10 @@
         };
         tasks = wizardEditingID ? tasks.map((item) => (item.ID === wizardEditingID ? task : item)) : [task, ...tasks];
       } else if (wizardEditingID) {
-        task = await UpdateTask({ ID: wizardEditingID, Name: draftName, Description: draftDescription, Kind: draftKind, Request: request });
+        task = (await UpdateTask({ ID: wizardEditingID, Name: draftName, Description: draftDescription, Kind: draftKind, Request: request } as any)) as unknown as GUITask;
         await loadTasks();
       } else {
-        task = await CreateTask({ Name: draftName, Description: draftDescription, Kind: draftKind, Request: request });
+        task = (await CreateTask({ Name: draftName, Description: draftDescription, Kind: draftKind, Request: request } as any)) as unknown as GUITask;
         await loadTasks();
       }
       selectedTask = task;
@@ -417,7 +438,7 @@
       return;
     }
     try {
-      const next = await StartTask(task.ID);
+      const next = (await StartTask(task.ID)) as unknown as GUITask;
       replaceLocalTask(next);
       selectedTask = next;
       startPollingIfNeeded();
@@ -434,7 +455,7 @@
       selectedTask = stopped;
       return;
     }
-    const next = await StopTask(task.ID);
+    const next = (await StopTask(task.ID)) as unknown as GUITask;
     replaceLocalTask(next);
     selectedTask = next;
   }
@@ -453,7 +474,7 @@
 
   async function refreshSelectedTask() {
     if (!selectedTask || !hasWailsRuntime()) return;
-    const next = await GetTask(selectedTask.ID);
+    const next = (await GetTask(selectedTask.ID)) as unknown as GUITask;
     replaceLocalTask(next);
     selectedTask = next;
   }
@@ -466,7 +487,7 @@
       const running = tasks.filter((task) => task.Status === 'running');
       for (const task of running) {
         try {
-          const next = await GetTask(task.ID);
+          const next = (await GetTask(task.ID)) as unknown as GUITask;
           replaceLocalTask(next);
           if (selectedTask?.ID === next.ID) selectedTask = next;
         } catch {
@@ -527,6 +548,83 @@
     if (path && hasWailsRuntime()) await OpenOutputFolder(path);
   }
 
+  function toggleDataManager() {
+    showDataManager = !showDataManager;
+    backupError = '';
+    backupResult = undefined;
+  }
+
+  async function chooseBackupExportPath() {
+    backupError = '';
+    if (!hasWailsRuntime()) {
+      backupExportPath = '/tmp/database_scan_backup.dbsbak';
+      return;
+    }
+    const path = await ChooseBackupExportPath();
+    if (path) backupExportPath = path;
+  }
+
+  async function chooseBackupImportFile() {
+    backupError = '';
+    if (!hasWailsRuntime()) {
+      backupImportPath = '/tmp/database_scan_backup.dbsbak';
+      return;
+    }
+    const path = await ChooseBackupImportFile();
+    if (path) backupImportPath = path;
+  }
+
+  async function exportBackup() {
+    backupError = '';
+    backupResult = undefined;
+    if (!backupExportPath.trim()) {
+      backupError = '请选择或填写备份导出路径';
+      return;
+    }
+    if (backupEncrypt && backupPassword.length < 6) {
+      backupError = '加密备份密码至少 6 位';
+      return;
+    }
+    backupBusy = true;
+    try {
+      if (!hasWailsRuntime()) {
+        backupResult = { Path: backupExportPath, Encrypted: backupEncrypt, ExportedTasks: tasks.length, ImportedTasks: 0, RenamedTasks: 0, Message: '浏览器预览：备份导出完成' };
+      } else {
+        backupResult = await ExportDataBackup({ Path: backupExportPath, Encrypt: backupEncrypt, Password: backupEncrypt ? backupPassword : '' });
+      }
+    } catch (error) {
+      backupError = normalizeError(error);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function importBackup() {
+    backupError = '';
+    backupResult = undefined;
+    if (!backupImportPath.trim()) {
+      backupError = '请选择备份文件';
+      return;
+    }
+    backupBusy = true;
+    try {
+      if (!hasWailsRuntime()) {
+        const imported = demoTask('draft');
+        imported.ID = `import-${Date.now()}`;
+        imported.Name = '导入的数据库扫描任务';
+        tasks = [imported, ...tasks];
+        backupResult = { Path: backupImportPath, Encrypted: Boolean(backupImportPassword), ExportedTasks: 0, ImportedTasks: 1, RenamedTasks: 0, Message: '浏览器预览：备份导入完成' };
+      } else {
+        backupResult = await ImportDataBackup({ Path: backupImportPath, Password: backupImportPassword });
+        await loadTasks();
+      }
+    } catch (error) {
+      backupError = normalizeError(error);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
   async function testConnectionFromDraft() {
     formError = '';
     connectionTest = undefined;
@@ -538,7 +636,7 @@
     }
     testingConnection = true;
     try {
-      connectionTest = hasWailsRuntime() ? await TestConnection(request) : demoConnection(request);
+      connectionTest = await callTestConnection(request);
     } catch (error) {
       formError = normalizeError(error);
     } finally {
@@ -573,7 +671,7 @@
     testingConnection = true;
     manualTestingIndex = index;
     try {
-      connectionTest = hasWailsRuntime() ? await TestConnection(request) : demoConnection(request);
+      connectionTest = await callTestConnection(request);
     } catch (error) {
       formError = normalizeError(error);
     } finally {
@@ -735,39 +833,59 @@
     return text.split('\n').filter(Boolean).map(() => createManualTarget());
   }
 
-  function filterTables(tables: TableResult[], valueQuery: string, fieldQuery: string, op: 'and' | 'or' | 'not', risk: string) {
-    const valueNeedle = valueQuery.trim().toLowerCase();
+  function filterTables(tables: TableResult[], fieldQuery: string, risk: string) {
     const fieldNeedle = fieldQuery.trim().toLowerCase();
     return tables.filter((table) => {
       const fields = table.Fields ?? [];
-      const rows = table.Rows ?? [];
-      const valueMatch = !valueNeedle || rows.some((row) => Object.values(row.Values ?? {}).some((value) => String(value).toLowerCase().includes(valueNeedle)));
       const fieldMatch = !fieldNeedle || fields.some((field) => field.Name.toLowerCase().includes(fieldNeedle));
       const riskMatch = risk === 'all' || fields.some((field) => fieldLevel(field) === risk);
-      if (!riskMatch) return false;
-      if (valueNeedle && fieldNeedle) {
-        if (op === 'or') return valueMatch || fieldMatch;
-        if (op === 'not') return valueMatch && !fieldMatch;
-        return valueMatch && fieldMatch;
-      }
-      if (valueNeedle) return op === 'not' ? !valueMatch : valueMatch;
-      if (fieldNeedle) return op === 'not' ? !fieldMatch : fieldMatch;
-      return true;
+      return riskMatch && fieldMatch;
     });
   }
 
-  function sampleRowsFor(tables: TableResult[]) {
-    return tables.flatMap((table) =>
-      (table.Rows ?? []).map((row) => ({
-        Table: table,
-        Values: row.Values ?? {},
-        Headers: sampleHeaders(table, row)
-      }))
-    );
+  function sampleGroupsFor(tables: TableResult[], valueQuery: string, metaQuery: string): SampleGroup[] {
+    const valueNeedle = valueQuery.trim().toLowerCase();
+    const metaNeedle = metaQuery.trim().toLowerCase();
+    return tables
+      .filter((table) => !metaNeedle || sampleFieldMetaMatches(table, metaNeedle))
+      .map((table) => {
+        const rows = (table.Rows ?? [])
+          .filter((row) => !valueNeedle || Object.values(row.Values ?? {}).some((value) => String(value).toLowerCase().includes(valueNeedle)))
+          .map((row) => ({ Values: row.Values ?? {} }));
+        return {
+          Table: table,
+          Headers: sampleGroupHeaders(table, rows),
+          Rows: rows
+        };
+      })
+      .filter((group) => group.Rows.length > 0);
   }
 
-  function sampleHeaders(table: TableResult, row: RowSample) {
-    return Array.from(new Set([...(table.Columns ?? []), ...Object.keys(row.Values ?? {})]));
+  function sampleFieldMetaMatches(table: TableResult, query: string) {
+    return (table.Fields ?? []).some((field) => {
+      const level = fieldLevel(field);
+      const aliases = {
+        high: '高敏 高敏感 高危 high',
+        medium: '中敏 中敏感 中危 medium',
+        low: '低敏 低敏感 低危 low'
+      } as Record<string, string>;
+      return [
+        field.Name,
+        (field.Kinds ?? []).join(' '),
+        field.Level,
+        level,
+        levelLabel(level),
+        aliases[level] ?? '',
+        modeLabel(field.Mode)
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    });
+  }
+
+  function sampleGroupHeaders(table: TableResult, rows: Array<{ Values: Record<string, string> }>) {
+    return Array.from(new Set([...(table.Columns ?? []), ...rows.flatMap((row) => Object.keys(row.Values ?? {}))]));
   }
 
   function sampleHeaderRisk(table: TableResult, header: string) {
@@ -844,6 +962,11 @@
     return `${request.Type || 'db'}://${request.Host || '未设置'}:${request.Port || '-'}`;
   }
 
+  function proxyLabel(request: ScanRequest) {
+    const proxy = request.Proxy?.trim();
+    return proxy ? `代理 ${proxy}` : '代理 直连';
+  }
+
   function tableLabel(table: TableResult) {
     return table.Schema ? `${table.Schema}.${table.Name}` : table.Name;
   }
@@ -853,7 +976,7 @@
   }
 
   function kindLabel(kind: string) {
-    return ({ single: '单目标扫描', fscan: 'fscan 批量扫描', sql: 'SQL 语句执行' } as Record<string, string>)[kind] ?? kind;
+    return ({ single: '单目标扫描', fscan: '多目标加载', sql: 'SQL 语句执行' } as Record<string, string>)[kind] ?? kind;
   }
 
   function modeLabel(mode: string) {
@@ -973,18 +1096,19 @@
   function demoConnection(request: ScanRequest): ConnectionTestResult {
     return {
       Success: true,
-      Message: '浏览器预览：连接测试通过',
+      Message: '浏览器预览：连接参数格式通过',
       Type: request.Type,
       Host: request.Host,
-      Port: request.Port,
-      Database: request.Database || '-',
-      User: request.User || '-',
-      Proxy: request.Proxy || '',
+      Port: Number(request.Port),
+      Database: request.Database,
+      User: request.User,
+      Proxy: request.Proxy,
       Version: 'preview',
-      ResolvedAddr: request.Host,
-      ServerTime: '-'
+      ResolvedAddr: `${request.Host}:${request.Port}`,
+      ServerTime: new Date().toLocaleString()
     };
   }
+
 </script>
 
 {#if loading}
@@ -1000,7 +1124,7 @@
     <section class="auth-card">
       <div class="brand-lock">DB</div>
       <h1>{vaultStatus.Initialized ? '解锁任务库' : '设置启动密码'}</h1>
-      <p>任务配置、数据库密码和扫描结果会写入本地 AES-256 加密文件。</p>
+      <p>任务配置、数据库密码和扫描结果会写入本地 SQLCipher 加密数据库。</p>
       <label>
         <span>启动密码</span>
         <input type="password" bind:value={password} placeholder="输入启动密码" on:keydown={(event) => event.key === 'Enter' && (vaultStatus.Initialized ? unlockVault() : setupVault())} />
@@ -1035,7 +1159,10 @@
       <label class="search-box" aria-label="搜索任务">
         <input bind:value={taskSearch} placeholder="搜索任务名称、详情或目标" />
       </label>
-      <button class="primary" on:click={openNewTask}>新建任务</button>
+      <div class="topbar-actions">
+        <button on:click={toggleDataManager}>数据管理</button>
+        <button class="primary" on:click={openNewTask}>新建任务</button>
+      </div>
     </header>
 
     {#if viewMode === 'overview'}
@@ -1046,8 +1173,79 @@
             <h2>新建任务后再设置扫描目标，结果进入任务详情查看。</h2>
             <p>当前任务库：{vaultStatus.Path || 'browser-preview'}</p>
           </div>
-          <button class="primary" on:click={openNewTask}>新建任务</button>
+          <div class="hero-actions">
+            <button on:click={toggleDataManager}>数据管理</button>
+            <button class="primary" on:click={openNewTask}>新建任务</button>
+          </div>
         </div>
+        {#if showDataManager}
+          <section class="data-manager">
+            <div class="section-heading">
+              <h2>数据管理</h2>
+              <span>SQLCipher 本地加密数据库</span>
+            </div>
+            <div class="vault-path">
+              <span>当前数据库路径</span>
+              <code>{vaultStatus.Path || 'browser-preview'}</code>
+            </div>
+            <div class="backup-grid">
+              <section class="backup-card">
+                <div>
+                  <h2>导出备份</h2>
+                  <p>导出任务、配置、扫描结果、日志和输出文件记录，不打包 Excel 文件本体。</p>
+                </div>
+                <label>
+                  <span>备份文件</span>
+                  <div class="inline-controls">
+                    <input bind:value={backupExportPath} placeholder="/tmp/database_scan_backup.dbsbak" />
+                    <button on:click={chooseBackupExportPath}>选择位置</button>
+                  </div>
+                </label>
+                <label class="inline-check">
+                  <input type="checkbox" bind:checked={backupEncrypt} />
+                  <span>加密备份</span>
+                </label>
+                {#if backupEncrypt}
+                  <label>
+                    <span>备份密码</span>
+                    <input type="password" bind:value={backupPassword} placeholder="独立备份密码，至少 6 位" />
+                  </label>
+                {:else}
+                  <p class="warning-line">不加密备份会暴露本地任务、数据库连接信息和扫描结果。</p>
+                {/if}
+                <button class="primary" on:click={exportBackup} disabled={backupBusy}>{backupBusy ? '处理中' : '导出备份'}</button>
+              </section>
+              <section class="backup-card">
+                <div>
+                  <h2>导入备份</h2>
+                  <p>默认合并导入。ID 冲突会自动生成新 ID，任务名重复会自动重命名。</p>
+                </div>
+                <label>
+                  <span>备份文件</span>
+                  <div class="inline-controls">
+                    <input bind:value={backupImportPath} placeholder="/tmp/database_scan_backup.dbsbak" />
+                    <button on:click={chooseBackupImportFile}>选择文件</button>
+                  </div>
+                </label>
+                <label>
+                  <span>备份密码</span>
+                  <input type="password" bind:value={backupImportPassword} placeholder="加密备份请输入密码，明文备份可留空" />
+                </label>
+                <button on:click={importBackup} disabled={backupBusy}>{backupBusy ? '处理中' : '导入备份'}</button>
+              </section>
+            </div>
+            {#if backupError}<p class="error-line">{backupError}</p>{/if}
+            {#if backupResult}
+              <div class="backup-result">
+                <strong>{backupResult.Message}</strong>
+                <span>{backupResult.Path}</span>
+                {#if backupResult.ExportedTasks}<em>导出任务 {backupResult.ExportedTasks}</em>{/if}
+                {#if backupResult.ImportedTasks}<em>导入任务 {backupResult.ImportedTasks}，重命名 {backupResult.RenamedTasks}</em>{/if}
+                <em>{backupResult.Encrypted ? '加密备份' : '明文备份'}</em>
+              </div>
+            {/if}
+          </section>
+        {/if}
         <div class="stat-grid">
           <div><span>全部任务</span><strong>{boardStats.total}</strong></div>
           <div><span>运行中</span><strong>{boardStats.running}</strong></div>
@@ -1075,6 +1273,7 @@
                 <span class:running={task.Status === 'running'} class:completed={task.Status === 'completed'} class:failed={task.Status === 'failed'} class="status-pill">{statusLabel(task.Status)}</span>
                 <div class="task-progress">
                   <span>{kindLabel(task.Kind)} · {task.TargetLabel || targetLabel(task.Request, task.Kind)}</span>
+                  <span class="proxy-line">{proxyLabel(task.Request)}</span>
                   <div class="task-risk-row">
                     {#if riskTotals(task.State?.Result?.Tables ?? []).high || riskTotals(task.State?.Result?.Tables ?? []).medium || riskTotals(task.State?.Result?.Tables ?? []).low}
                       <i class="risk-pill high">高 {riskTotals(task.State?.Result?.Tables ?? []).high}</i>
@@ -1135,7 +1334,7 @@
             <div class="kind-grid">
               {#each [
                 { id: 'single', title: '单目标扫描', body: '连接一个数据库实例并扫描敏感字段。' },
-                { id: 'fscan', title: 'fscan 批量扫描', body: '导入 fscan 结果或手工维护多目标。' },
+                { id: 'fscan', title: '多目标加载', body: '导入 fscan 结果或手工维护多个目标。' },
                 { id: 'sql', title: 'SQL 语句执行', body: '连接数据库后执行自定义 SQL。' }
               ] as option}
                 <button class:active={draftKind === option.id} on:click={() => setDraftKind(option.id)}>
@@ -1350,6 +1549,11 @@
               <div><span>高敏命中</span><strong>{currentRisk.high}</strong></div>
               <div><span>当前进度</span><strong>{currentState.Progress || selectedTask.Progress || 0}%</strong></div>
             </div>
+            <div class="overview-risk-row">
+              <span class="risk-pill high">高危 {currentRisk.high}</span>
+              <span class="risk-pill medium">中危 {currentRisk.medium}</span>
+              <span class="risk-pill low">低危 {currentRisk.low}</span>
+            </div>
             <div class="progress-line"><i style={`width: ${Math.max(0, Math.min(100, currentState.Progress || selectedTask.Progress || 0))}%`}></i></div>
             <div class="overview-foot">
               <span>{currentState.Message || selectedTask.Message || '等待扫描'}</span>
@@ -1361,6 +1565,7 @@
             <div><span>创建时间</span><strong>{formatTime(selectedTask.CreatedAt)}</strong></div>
             <div><span>更新时间</span><strong>{formatTime(selectedTask.UpdatedAt)}</strong></div>
             <div><span>扫描模式</span><strong>{modeLabel(selectedTask.Request.Mode)}</strong></div>
+            <div><span>代理</span><strong>{proxyLabel(selectedTask.Request).replace(/^代理\s*/, '')}</strong></div>
             <div class="output-info">
               <span>输出文件</span>
               <strong>{outputPath || '-'}</strong>
@@ -1378,9 +1583,7 @@
 
           {#if activeTab === 'hits'}
             <div class="table-tools">
-              <label><span>数据内容检索</span><input bind:value={dataQuery} placeholder="手机号 / 邮箱 / token 值" /></label>
               <label><span>字段检索</span><input bind:value={fieldQuery} placeholder="phone / id_card / token" /></label>
-              <label><span>关系</span><select bind:value={relation}><option value="and">与</option><option value="or">或</option><option value="not">非</option></select></label>
               <label><span>风险</span><select bind:value={riskFilter}><option value="all">全部</option><option value="high">高危</option><option value="medium">中危</option><option value="low">低危</option></select></label>
             </div>
             <div class="result-table-wrap">
@@ -1406,6 +1609,7 @@
                   <strong>{field.Name}</strong>
                   <span>{field.Database} / {field.TableName}</span>
                   <em>{(field.Kinds ?? []).join(' / ')} · {levelLabel(fieldLevel(field))}</em>
+                  <small>命中行数 {field.Total || field.Table.Total || 0}</small>
                 </button>
               {/each}
             </div>
@@ -1469,34 +1673,42 @@
               {/if}
             </div>
           {:else if activeTab === 'samples'}
+            <div class="sample-tools">
+              <label><span>数据内容检索</span><input bind:value={dataQuery} placeholder="手机号 / 邮箱 / token 值" /></label>
+              <label><span>敏感匹配检索</span><input bind:value={sampleMetaQuery} placeholder="高敏感 / 密码 / token / 邮箱" /></label>
+              <span>{sampleRowTotal} 条样例</span>
+            </div>
             <div class="sample-scroll">
-              {#each sampleRows as row}
+              {#each sampleGroups as group}
                 <article class="sample-group">
                   <div class="sample-group-heading">
-                    <div><em>数据库名</em><strong>{row.Table.Database}</strong></div>
-                    <div><em>表名</em><span>{tableLabel(row.Table)}</span></div>
+                    <div><em>数据库名</em><strong>{group.Table.Database}</strong></div>
+                    <div><em>表名</em><span>{tableLabel(group.Table)}</span></div>
+                    <div><em>样例行</em><span>{group.Rows.length}</span></div>
                   </div>
                   <table>
                     <thead>
                       <tr>
-                        {#each row.Headers as header}
-                          <th class:sample-high={sampleHeaderRisk(row.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(row.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(row.Table, header) === 'low'}>
+                        {#each group.Headers as header}
+                          <th class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
                             <span>{header}</span>
-                            {#if sampleHeaderRisk(row.Table, header)}
-                              <em>{levelLabel(sampleHeaderRisk(row.Table, header))}{sampleHeaderKinds(row.Table, header) ? ` · ${sampleHeaderKinds(row.Table, header)}` : ''}</em>
+                            {#if sampleHeaderRisk(group.Table, header)}
+                              <em>{levelLabel(sampleHeaderRisk(group.Table, header))}{sampleHeaderKinds(group.Table, header) ? ` · ${sampleHeaderKinds(group.Table, header)}` : ''}</em>
                             {/if}
                           </th>
                         {/each}
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
-                        {#each row.Headers as header}
-                          <td class:sample-high={sampleHeaderRisk(row.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(row.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(row.Table, header) === 'low'}>
-                            {row.Values[header] ?? ''}
-                          </td>
-                        {/each}
-                      </tr>
+                      {#each group.Rows as row}
+                        <tr>
+                          {#each group.Headers as header}
+                            <td class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
+                              {row.Values[header] ?? ''}
+                            </td>
+                          {/each}
+                        </tr>
+                      {/each}
                     </tbody>
                   </table>
                 </article>
