@@ -2100,31 +2100,33 @@
                     <div><em>表名</em><span>{tableLabel(group.Table)}</span></div>
                     <div><em>样例行</em><span>{group.Rows.length}</span></div>
                   </div>
-                  <table>
-                    <thead>
-                      <tr>
-                        {#each group.Headers as header}
-                          <th class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
-                            <span>{header}</span>
-                            {#if sampleHeaderRisk(group.Table, header)}
-                              <em>{levelLabel(sampleHeaderRisk(group.Table, header))}{sampleHeaderKinds(group.Table, header) ? ` · ${sampleHeaderKinds(group.Table, header)}` : ''}</em>
-                            {/if}
-                          </th>
-                        {/each}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each group.Rows as row}
+                  <div class="sample-table-wrap">
+                    <table>
+                      <thead>
                         <tr>
                           {#each group.Headers as header}
-                            <td class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
-                              {row.Values[header] ?? ''}
-                            </td>
+                            <th class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
+                              <span>{header}</span>
+                              {#if sampleHeaderRisk(group.Table, header)}
+                                <em>{levelLabel(sampleHeaderRisk(group.Table, header))}{sampleHeaderKinds(group.Table, header) ? ` · ${sampleHeaderKinds(group.Table, header)}` : ''}</em>
+                              {/if}
+                            </th>
                           {/each}
                         </tr>
-                      {/each}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {#each group.Rows as row}
+                          <tr>
+                            {#each group.Headers as header}
+                              <td class:sample-high={sampleHeaderRisk(group.Table, header) === 'high'} class:sample-medium={sampleHeaderRisk(group.Table, header) === 'medium'} class:sample-low={sampleHeaderRisk(group.Table, header) === 'low'}>
+                                {row.Values[header] ?? ''}
+                              </td>
+                            {/each}
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
                 </article>
               {:else}
                 <div class="empty-state"><strong>暂无样例数据</strong><span>扫描命中后会按表展示样例行。</span></div>

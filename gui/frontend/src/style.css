@@ -1848,11 +1848,12 @@ button.field-row.selected {
 
 .sample-scroll {
   max-height: 430px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sample-group {
-  min-width: max-content;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -1896,8 +1897,34 @@ button.field-row.selected {
 }
 
 .sample-group table {
+  width: max-content;
+  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
+}
+
+.sample-table-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+}
+
+.sample-table-wrap th,
+.sample-table-wrap td {
+  min-width: 150px;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.sample-table-wrap th:first-child,
+.sample-table-wrap td:first-child {
+  min-width: 72px;
+}
+
+.sample-table-wrap th:not(:first-child),
+.sample-table-wrap td:not(:first-child) {
+  padding-right: 18px;
 }
 
 .sample-group tbody tr:nth-child(odd) td:not(.sample-high):not(.sample-medium):not(.sample-low) {
