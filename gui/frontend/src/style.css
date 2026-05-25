@@ -1449,6 +1449,45 @@ label span,
   padding: 16px;
 }
 
+.select-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.select-field > span,
+.field-tools > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.filter-select,
+.sort-select {
+  min-width: 0;
+}
+
+.filter-select .db-type-menu,
+.sort-select .db-type-menu {
+  right: 0;
+  left: auto;
+}
+
+.field-tools {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 0;
+}
+
+.field-tools .select-field {
+  width: min(220px, 100%);
+}
+
+.field-tools > span {
+  padding-bottom: 10px;
+}
+
 .sample-tools {
   display: grid;
   grid-template-columns: minmax(240px, 420px) minmax(240px, 420px) auto;

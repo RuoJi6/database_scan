@@ -30,7 +30,18 @@
   type ViewMode = 'overview' | 'wizard' | 'detail';
   type DetailTab = 'hits' | 'fields' | 'targets' | 'sql' | 'samples' | 'logs';
   type ThemePreference = 'system' | 'light' | 'dark';
+  type FieldSortOrder = 'desc' | 'asc';
   const themeOptions: ThemePreference[] = ['system', 'light', 'dark'];
+  const riskOptions: Array<[string, string]> = [
+    ['all', '全部'],
+    ['high', '高危'],
+    ['medium', '中危'],
+    ['low', '低危']
+  ];
+  const fieldSortOptions: Array<[FieldSortOrder, string]> = [
+    ['desc', '命中行数降序'],
+    ['asc', '命中行数升序']
+  ];
 
   type ScanRequest = {
     Type: string;
@@ -227,6 +238,7 @@
   let sampleMetaQuery = '';
   let fieldQuery = '';
   let riskFilter = 'all';
+  let fieldSortOrder: FieldSortOrder = 'desc';
   let showPassword = false;
   let manualSeq = 1;
   let manualTargets: ManualTarget[] = [createManualTarget()];
@@ -257,6 +269,7 @@
   $: currentTables = currentState.Result?.Tables ?? [];
   $: currentRisk = riskTotals(currentTables);
   $: currentEvidence = evidenceFieldsFor(currentTables);
+  $: sortedEvidence = sortEvidenceFields(currentEvidence, fieldSortOrder);
   $: outputPath = currentState.Outputs?.[0] || selectedTask?.Request.Output || '';
   $: showSQLTab = shouldShowSQLTab(selectedTask);
   $: if (activeTab === 'sql' && !showSQLTab) activeTab = 'hits';
@@ -1036,6 +1049,16 @@
     return tables.flatMap((table) => (table.Fields ?? []).map((field) => ({ ...field, Database: table.Database, TableName: tableLabel(table), Table: table })));
   }
 
+  function sortEvidenceFields(fields: EvidenceField[], order: FieldSortOrder) {
+    const factor = order === 'asc' ? 1 : -1;
+    return [...fields].sort((a, b) => {
+      const totalA = fieldHitTotal(a);
+      const totalB = fieldHitTotal(b);
+      if (totalA !== totalB) return (totalA - totalB) * factor;
+      return `${a.Database}/${a.TableName}/${a.Name}`.localeCompare(`${b.Database}/${b.TableName}/${b.Name}`);
+    });
+  }
+
   function selectEvidenceField(field: EvidenceField) {
     selectedEvidence = field;
   }
@@ -1045,6 +1068,10 @@
       .map((row) => sampleValueForField(row, field.Name))
       .filter((value) => value.trim() !== '')
       .map((value, index) => ({ Index: index + 1, Value: value }));
+  }
+
+  function fieldHitTotal(field: EvidenceField) {
+    return field.Total || field.Table.Total || 0;
   }
 
   function sampleValueForField(row: RowSample, fieldName: string) {
@@ -1281,6 +1308,14 @@
 
   function levelLabel(level: string) {
     return ({ high: '高敏', medium: '中敏', low: '低敏', all: '全部' } as Record<string, string>)[level] ?? level;
+  }
+
+  function riskFilterLabel(value: string) {
+    return riskOptions.find(([option]) => option === value)?.[1] ?? value;
+  }
+
+  function fieldSortLabel(value: FieldSortOrder) {
+    return fieldSortOptions.find(([option]) => option === value)?.[1] ?? value;
   }
 
   function encodingLabel(encoding: string) {
@@ -1996,7 +2031,24 @@
           {#if activeTab === 'hits'}
             <div class="table-tools">
               <label><span>字段检索</span><input bind:value={fieldQuery} placeholder="phone / id_card / token" /></label>
-              <label><span>风险</span><select bind:value={riskFilter}><option value="all">全部</option><option value="high">高危</option><option value="medium">中危</option><option value="low">低危</option></select></label>
+              <div class="select-field">
+                <span>风险</span>
+                <div class="db-type-select filter-select">
+                  <button class="db-type-trigger" class:open={activeDbTypeMenu === 'risk-filter'} type="button" on:click|stopPropagation={() => (activeDbTypeMenu = activeDbTypeMenu === 'risk-filter' ? '' : 'risk-filter')} aria-haspopup="listbox" aria-expanded={activeDbTypeMenu === 'risk-filter'}>
+                    <strong>{riskFilterLabel(riskFilter)}</strong>
+                    <i></i>
+                  </button>
+                  {#if activeDbTypeMenu === 'risk-filter'}
+                    <div class="db-type-menu" role="listbox">
+                      {#each riskOptions as option}
+                        <button type="button" class:active={riskFilter === option[0]} role="option" aria-selected={riskFilter === option[0]} on:click={() => ((riskFilter = option[0]), (activeDbTypeMenu = ''))}>
+                          <span>{option[1]}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
             </div>
             <div class="result-table-wrap">
               <table>
@@ -2015,14 +2067,35 @@
               </table>
             </div>
           {:else if activeTab === 'fields'}
+            <div class="field-tools">
+              <div class="select-field">
+                <span>排序</span>
+                <div class="db-type-select sort-select">
+                  <button class="db-type-trigger" class:open={activeDbTypeMenu === 'field-sort'} type="button" on:click|stopPropagation={() => (activeDbTypeMenu = activeDbTypeMenu === 'field-sort' ? '' : 'field-sort')} aria-haspopup="listbox" aria-expanded={activeDbTypeMenu === 'field-sort'}>
+                    <strong>{fieldSortLabel(fieldSortOrder)}</strong>
+                    <i></i>
+                  </button>
+                  {#if activeDbTypeMenu === 'field-sort'}
+                    <div class="db-type-menu" role="listbox">
+                      {#each fieldSortOptions as option}
+                        <button type="button" class:active={fieldSortOrder === option[0]} role="option" aria-selected={fieldSortOrder === option[0]} on:click={() => ((fieldSortOrder = option[0]), (activeDbTypeMenu = ''))}>
+                          <span>{option[1]}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+              <span>{sortedEvidence.length} 个字段</span>
+            </div>
             <div class="field-list" class:has-popover={Boolean(selectedEvidence)}>
-              {#each currentEvidence as field}
+              {#each sortedEvidence as field}
                 <div class="field-card" class:active={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName}>
                   <button class={`field-row ${fieldLevel(field)}`} class:selected={selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName} on:click={() => selectEvidenceField(field)}>
                     <strong>{field.Name}</strong>
                     <span>{field.Database} / {field.TableName}</span>
                     <em>{(field.Kinds ?? []).join(' / ')} · {levelLabel(fieldLevel(field))}</em>
-                    <small>命中行数 {field.Total || field.Table.Total || 0}</small>
+                    <small>命中行数 {fieldHitTotal(field)}</small>
                   </button>
                   {#if selectedEvidence?.Name === field.Name && selectedEvidence?.Database === field.Database && selectedEvidence?.TableName === field.TableName}
                     <aside class={`field-popover ${fieldLevel(selectedEvidence)}`}>
