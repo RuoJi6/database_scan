@@ -27,6 +27,33 @@ func TestContentKinds(t *testing.T) {
 	}
 }
 
+func TestHaESensitiveContentKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		kind Kind
+	}{
+		{name: "jwt", text: "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature_demo", kind: JWT},
+		{name: "cloud key", text: "access_key_secret=LTAI5tQH9v2DemoSecret12", kind: CloudKey},
+		{name: "authorization header", text: "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456", kind: Auth},
+		{name: "jdbc", text: "spring.datasource.url=jdbc:mysql://127.0.0.1:3306/app?user=root&password=pass", kind: JDBC},
+		{name: "wecom", text: "corpsecret=ww1234567890abcdef", kind: WeComKey},
+		{name: "sensitive field", text: "refresh_token=rt_live_1234567890", kind: Password},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[Kind]bool{}
+			for _, kind := range ContentKindsByLevel(LevelHigh, tc.text) {
+				seen[kind] = true
+			}
+			if !seen[tc.kind] {
+				t.Fatalf("expected %s in %#v", tc.kind, seen)
+			}
+		})
+	}
+}
+
 func TestContentKindsByLevel(t *testing.T) {
 	kinds := ContentKindsByLevel(LevelMedium, "11010119900101123X 13800138000 test@example.com")
 	seen := map[Kind]bool{}

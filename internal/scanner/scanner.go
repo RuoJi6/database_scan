@@ -981,10 +981,10 @@ func colorize(s string, kinds []detector.Kind, enabled bool) string {
 
 func riskColor(kinds []detector.Kind) string {
 	for _, kind := range kinds {
-		switch kind {
-		case detector.Password, detector.IDCard, detector.BankCard:
+		if detector.LevelOf(kind) == detector.LevelHigh {
 			return "\x1b[31m"
-		case detector.Phone, detector.Email:
+		}
+		if detector.LevelOf(kind) == detector.LevelMedium {
 			return "\x1b[33m"
 		}
 	}
