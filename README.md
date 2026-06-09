@@ -1,3 +1,9 @@
+# 推荐项目
+
+[RuoJi6/dbx-audit](https://github.com/RuoJi6/dbx-audit)
+
+[![dbx-audit](https://raw.githubusercontent.com/RuoJi6/dbx-audit/main/assets/image-20260609201713440.png)](https://github.com/RuoJi6/dbx-audit)
+
 # database_scan
 
 [![build](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml/badge.svg)](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml)
