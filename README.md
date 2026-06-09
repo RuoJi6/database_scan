@@ -2,7 +2,7 @@
 
 [![build](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml/badge.svg)](https://github.com/RuoJi6/database_scan/actions/workflows/build.yml)
 
-`database_scan` 是一个 Go 编写的数据库敏感信息检索工具，用于检查开发数据库中是否存在手机号、身份证、地址、账号、密码、邮箱、银行卡、token/secret 等敏感信息。默认终端表格输出。
+`database_scan` 是一个 Go 编写的数据库敏感信息检索工具，用于检查开发数据库中是否存在手机号、身份证、地址、账号、密码、邮箱、银行卡、token/secret、云密钥、JWT、Authorization、JDBC 连接串、企微密钥等敏感信息。默认终端表格输出。
 
 ![image-20260523110116512](assets/image-20260523110116512.png)
 
@@ -18,7 +18,7 @@
   - `content`：扫描字段内容
   - `all`：执行全部模式
 - 敏感级别：
-  - `high`：身份证、密码/密钥、银行卡
+  - `high`：身份证、密码/密钥、银行卡、云密钥、JWT、认证凭据、JDBC 连接串、企微密钥
   - `medium`：手机号、邮箱
   - `low`：地址、用户名/账号
   - `all`：全部级别，默认值
@@ -117,7 +117,7 @@ Oracle 的 `--database` 表示 service name：
 - `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle、Redis 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
-- `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡等最高敏信息
+- `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡、云密钥、JWT、认证凭据、JDBC 连接串、企微密钥等最高敏信息
 - `--limit`：每张命中表最多展示整行样例数量，默认 15
 - `--include-system`：包含系统库
 - `--mask`：样例值脱敏显示

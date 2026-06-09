@@ -15,6 +15,11 @@ const (
 	Password Kind = "密码/密钥"
 	Email    Kind = "邮箱"
 	BankCard Kind = "银行卡"
+	CloudKey Kind = "云厂商密钥"
+	JWT      Kind = "JWT令牌"
+	Auth     Kind = "认证凭据"
+	JDBC     Kind = "JDBC连接"
+	WeComKey Kind = "企微密钥"
 )
 
 type Level string
@@ -38,9 +43,14 @@ var Rules = []Rule{
 	{Kind: IDCard, Level: LevelHigh, Keywords: []string{"id_card", "identity", "cert", "身份证", "证件"}, Pattern: regexp.MustCompile(`\b\d{17}[\dXx]\b`)},
 	{Kind: Address, Level: LevelLow, Keywords: []string{"address", "addr", "地址", "住址"}, Pattern: regexp.MustCompile(`(省|市|区|县|镇|街道|路|号楼|小区)`)},
 	{Kind: Username, Level: LevelLow, Keywords: []string{"user", "username", "login", "account", "账号", "用户", "用户名"}, Pattern: regexp.MustCompile(`^[A-Za-z0-9_.@-]{3,64}$`)},
-	{Kind: Password, Level: LevelHigh, Keywords: []string{"password", "passwd", "pwd", "token", "secret", "key", "密码", "密钥", "令牌"}, Pattern: regexp.MustCompile(`.{6,}`)},
+	{Kind: Password, Level: LevelHigh, Keywords: []string{"password", "passwd", "pwd", "db_password", "database_password", "api_key", "apikey", "api_secret", "secret", "token", "key", "config", "access", "admin", "ticket", "密码", "密钥", "令牌"}, Pattern: regexp.MustCompile(`(?i)[\w.\-]{0,32}(pass|pwd|passwd|password|key|secret|token|config|access|admin|ticket)[\w.\-]{0,32}\s*[:=]\s*["']?[^"'\s,;]{6,}`)},
 	{Kind: Email, Level: LevelMedium, Keywords: []string{"email", "mail", "邮箱"}, Pattern: regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)},
 	{Kind: BankCard, Level: LevelHigh, Keywords: []string{"bank", "card", "银行卡", "卡号"}, Pattern: regexp.MustCompile(`\b\d{13,19}\b`)},
+	{Kind: CloudKey, Level: LevelHigh, Keywords: []string{"access_key", "access-key", "accesskey", "access_key_id", "access_key_secret", "aws_access_key_id", "aws_secret_access_key", "cloud_api_key", "alicloud_access_key", "aliyun_access_key", "oss_access_key", "LTAI", "AKIA", "ASIA"}, Pattern: regexp.MustCompile(`(?i)(access[-_]?key[-_]?(id|secret)|LTAI[a-z0-9]{12,20}|\b(AKIA|ASIA)[0-9A-Z]{16}\b)`)},
+	{Kind: JWT, Level: LevelHigh, Keywords: []string{"jwt", "json_web_token", "id_token"}, Pattern: regexp.MustCompile(`eyJ[A-Za-z0-9_\-/+]{10,}\.[A-Za-z0-9._\-/+]{10,}(?:\.[A-Za-z0-9._\-/+]{10,})?`)},
+	{Kind: Auth, Level: LevelHigh, Keywords: []string{"authorization", "auth_header", "auth_token", "bearer", "basic_auth"}, Pattern: regexp.MustCompile(`(?i)\b(basic|bearer)\s+[a-z0-9_.=:_+/\-]{5,200}\b`)},
+	{Kind: JDBC, Level: LevelHigh, Keywords: []string{"jdbc", "jdbc_url", "database_url", "connection_string", "datasource", "db_url"}, Pattern: regexp.MustCompile(`(?i)jdbc:[a-z0-9:]+://[a-z0-9.\-_:;=/@?,&%]+`)},
+	{Kind: WeComKey, Level: LevelHigh, Keywords: []string{"corpid", "corpsecret", "wecom", "wechat_work", "企业微信"}, Pattern: regexp.MustCompile(`(?i)\bcorp(id|secret)\b`)},
 }
 
 func FieldKinds(names ...string) []Kind {
@@ -102,14 +112,14 @@ func SQLPattern() string {
 func SQLPatternByLevel(level Level) string {
 	switch level {
 	case LevelHigh:
-		return `([0-9]{17}[0-9Xx]|[0-9]{13,19})`
+		return `([0-9]{17}[0-9Xx]|[0-9]{13,19}|eyJ[A-Za-z0-9_\-/+]{10,}\.[A-Za-z0-9._\-/+]{10,}|LTAI[A-Za-z0-9]{12,20}|(AKIA|ASIA)[0-9A-Z]{16}|[Aa]ccess[-_]?[Kk]ey[-_]?([Ii][Dd]|[Ss]ecret)|[Bb]earer[[:space:]]+[A-Za-z0-9_.=:_+/\-]{5,200}|[Bb]asic[[:space:]]+[A-Za-z0-9=:_+/\-]{5,100}|jdbc:[A-Za-z0-9:]+://[A-Za-z0-9.\-_:;=/@?,&%]+|([Pp]assword|[Pp]asswd|[Pp]wd|[Tt]oken|[Ss]ecret|[Aa]pi[-_]?[Kk]ey|[Cc]orpsecret|[Cc]orpid)[[:space:]]*[:=])`
 	case LevelMedium:
 		return `(1[3-9][0-9]{9}|[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})`
 	case LevelLow:
 		return `(省|市|区|县|镇|街道|路|号楼|小区)`
 	default:
 	}
-	return `(1[3-9][0-9]{9}|[0-9]{17}[0-9Xx]|[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|[0-9]{13,19}|省|市|区|县|镇|街道|路|号楼|小区)`
+	return `(1[3-9][0-9]{9}|[0-9]{17}[0-9Xx]|[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|[0-9]{13,19}|eyJ[A-Za-z0-9_\-/+]{10,}\.[A-Za-z0-9._\-/+]{10,}|LTAI[A-Za-z0-9]{12,20}|(AKIA|ASIA)[0-9A-Z]{16}|[Aa]ccess[-_]?[Kk]ey[-_]?([Ii][Dd]|[Ss]ecret)|[Bb]earer[[:space:]]+[A-Za-z0-9_.=:_+/\-]{5,200}|[Bb]asic[[:space:]]+[A-Za-z0-9=:_+/\-]{5,100}|jdbc:[A-Za-z0-9:]+://[A-Za-z0-9.\-_:;=/@?,&%]+|([Pp]assword|[Pp]asswd|[Pp]wd|[Tt]oken|[Ss]ecret|[Aa]pi[-_]?[Kk]ey|[Cc]orpsecret|[Cc]orpid)[[:space:]]*[:=]|省|市|区|县|镇|街道|路|号楼|小区)`
 }
 
 func LevelMatches(filter Level, actual Level) bool {
