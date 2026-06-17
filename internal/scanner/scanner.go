@@ -217,7 +217,7 @@ func matchingFieldCount(columns []db.Column) int {
 func matchingFieldCountByLevel(columns []db.Column, level detector.Level) int {
 	total := 0
 	for _, col := range columns {
-		if len(detector.FieldKindsByLevel(level, col.Table, col.Name)) > 0 {
+		if len(detector.FieldKindsByLevel(level, col.Name)) > 0 {
 			total++
 		}
 	}
@@ -507,7 +507,7 @@ func scanTable(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, job table
 			outcome.Errors = append(outcome.Errors, fmt.Sprintf("scan interrupted: %v", err))
 			return outcome
 		}
-		kinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
+		kinds := detector.FieldKindsByLevel(opts.Level, col.Name)
 		progressf(opts.Progress, "  字段 %d/%d %s.%s: 统计中...\n", j+1, len(conditionCols), tableName, col.Name)
 		total, err := queryNonEmptyCount(ctx, sqlDB, adapter, col, opts)
 		if err != nil {
@@ -591,7 +591,7 @@ func sensitiveColumns(columns []db.Column) []db.Column {
 func sensitiveColumnsByLevel(columns []db.Column, level detector.Level) []db.Column {
 	var out []db.Column
 	for _, col := range columns {
-		if len(detector.FieldKindsByLevel(level, col.Table, col.Name)) > 0 {
+		if len(detector.FieldKindsByLevel(level, col.Name)) > 0 {
 			out = append(out, col)
 		}
 	}
@@ -599,7 +599,7 @@ func sensitiveColumnsByLevel(columns []db.Column, level detector.Level) []db.Col
 }
 
 func scanColumn(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, col db.Column, opts Options, result *Result, mu *sync.Mutex) {
-	fieldKinds := detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
+	fieldKinds := detector.FieldKindsByLevel(opts.Level, col.Name)
 	if opts.Mode == FieldName || opts.Mode == All {
 		for _, kind := range fieldKinds {
 			addSummary(result, mu, Summary{Database: col.Database, Schema: col.Schema, Table: col.Table, Column: col.Name, Kind: kind, Level: detector.LevelOf(kind), Mode: FieldName, Total: 1})
@@ -691,7 +691,7 @@ func querySampleRows(ctx context.Context, sqlDB *sql.DB, adapter db.Adapter, sel
 	defer rows.Close()
 	sensitiveByColumn := map[string][]detector.Kind{}
 	for _, col := range conditionCols {
-		sensitiveByColumn[col.Name] = detector.FieldKindsByLevel(opts.Level, col.Table, col.Name)
+		sensitiveByColumn[col.Name] = detector.FieldKindsByLevel(opts.Level, col.Name)
 	}
 	names, err := rows.Columns()
 	if err != nil {

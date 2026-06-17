@@ -134,6 +134,7 @@ export namespace app {
 	    User: string;
 	    Password: string;
 	    Database: string;
+	    AuthDatabase: string;
 	    Table: string;
 	    Proxy: string;
 	    Mode: string;
@@ -162,6 +163,7 @@ export namespace app {
 	        this.User = source["User"];
 	        this.Password = source["Password"];
 	        this.Database = source["Database"];
+	        this.AuthDatabase = source["AuthDatabase"];
 	        this.Table = source["Table"];
 	        this.Proxy = source["Proxy"];
 	        this.Mode = source["Mode"];

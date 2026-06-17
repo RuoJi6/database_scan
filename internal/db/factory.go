@@ -1,6 +1,10 @@
 package db
 
-import "fmt"
+import (
+	"fmt"
+
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
+)
 
 func NewAdapter(kind string) (Adapter, error) {
 	switch kind {
@@ -38,6 +42,10 @@ func NewAdapter(kind string) (Adapter, error) {
 		return OracleAdapter{}, nil
 	case "redis":
 		return RedisAdapter{}, nil
+	case "clickhouse", "clickhouse-native":
+		return NewClickHouseAdapter("clickhouse", clickhouse.Native, "ClickHouse Native"), nil
+	case "clickhouse-http":
+		return NewClickHouseAdapter("clickhouse-http", clickhouse.HTTP, "ClickHouse HTTP"), nil
 	default:
 		return nil, fmt.Errorf("unsupported database type %q", kind)
 	}

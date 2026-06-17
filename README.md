@@ -14,7 +14,7 @@
 
 ## 支持能力
 
-- 数据库：MySQL/MariaDB/TiDB、MSSQL、PostgreSQL、Oracle，以及多种 MySQL/PostgreSQL 协议兼容国产数据库
+- 数据库：MySQL/MariaDB/TiDB、MSSQL、PostgreSQL、Oracle、Redis、MongoDB、Elasticsearch、ClickHouse，以及多种 MySQL/PostgreSQL 协议兼容国产数据库
 - 代理：直连、SOCKS5、HTTP CONNECT
 - 认证：命令行密码或隐藏交互输入
 - 输出：连接信息、按表分组的敏感字段、存在行数和类似 SQL 查询结果的整行真实样例值
@@ -99,6 +99,25 @@ Oracle 的 `--database` 表示 service name：
 ./database_scan --type redis --host 127.0.0.1 --port 6379 --password pass --limit 20 --output redis-scan.xlsx
 ```
 
+扫描 MongoDB 文档内容，`--auth-database` 表示 MongoDB authSource：
+
+```bash
+./database_scan --type mongodb --host 127.0.0.1 --port 27017 --user audit --password pass --database audit_demo --auth-database admin
+```
+
+扫描无认证 Elasticsearch：
+
+```bash
+./database_scan --type elasticsearch --host 127.0.0.1 --port 9200 --limit 20
+```
+
+扫描 ClickHouse，HTTP 与 Native 协议使用不同类型：
+
+```bash
+./database_scan --type clickhouse-http --host 127.0.0.1 --port 8123 --user audit --password pass --database audit_demo
+./database_scan --type clickhouse-native --host 127.0.0.1 --port 9000 --user audit --password pass --database audit_demo
+```
+
 解析 fscan 扫描结果中的数据库凭据，并对所有命中的数据库一键接入扫描：
 
 ```bash
@@ -117,10 +136,11 @@ Oracle 的 `--database` 表示 service name：
 
 - `--type`：数据库类型，见下方支持列表
 - `--host` / `--port`：目标地址和端口，端口不填时使用默认端口；也支持 `--host host:port` 或位置参数 `host:port`
-- `--user` / `--password`：账号密码；密码不填时交互输入；Redis 可只传 `--password`
-- `--database`：指定要扫描的单个数据库；Redis 中表示 DB 编号，例如 `--database 2`
+- `--user` / `--password`：账号密码；密码不填时交互输入；Redis 可只传 `--password`；Elasticsearch 无认证时可留空
+- `--database`：指定要扫描的单个数据库/索引；Redis 中表示 DB 编号，例如 `--database 2`
+- `--auth-database`：MongoDB 认证库，即 authSource；不填时优先使用 `--database`，再回退 `admin`
 - `--table`：只扫描指定数据库中的某一张表，需要同时指定 `--database`；支持 `Users` 或 `dbo.Users`
-- `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle、Redis 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
+- `--fscan result.txt`：解析 fscan `v2.1.2` / `1.8.4` 扫描结果中的 MySQL、MariaDB、MSSQL、PostgreSQL、Oracle、Redis、MongoDB、Elasticsearch、ClickHouse 凭据，并逐个接入扫描；同一结果文件可包含多个地址、端口、账号或密码，支持终端输出和保存结果文件
 - `--proxy socks5://...|http://...`：代理地址
 - `--mode field-content|field-name|content|all`：检索模式，默认 `field-content`
 - `--level all|high|medium|low`：按敏感级别检索，默认 `all`；`high` 只检索身份证、密码/密钥、银行卡、云密钥、JWT、认证凭据、JDBC 连接串、企微密钥等最高敏信息
@@ -138,12 +158,14 @@ Oracle 的 `--database` 表示 service name：
 
 ## 支持数据库类型
 
-- 原生支持：`mysql`、`mariadb`、`mssql`、`sqlserver`、`postgres`、`postgresql`、`oracle`、`go-ora`、`redis`
+- 原生支持：`mysql`、`mariadb`、`mssql`、`sqlserver`、`postgres`、`postgresql`、`oracle`、`go-ora`、`redis`、`mongodb`、`elasticsearch`、`clickhouse-http`、`clickhouse-native`
 - MySQL 协议兼容：`tidb`、`oceanbase`、`oceanbase-mysql`、`polardb-mysql`、`doris`、`starrocks`、`gbase-mysql`
 - PostgreSQL 协议兼容：`opengauss`、`gaussdb`、`kingbase`、`kingbasees`、`highgo`、`polardb-postgres`
-- 默认端口：MySQL 协议族 `3306`，MSSQL `1433`，PostgreSQL 协议族 `5432`，Oracle `1521`，Redis `6379`
+- 默认端口：MySQL 协议族 `3306`，MSSQL `1433`，PostgreSQL 协议族 `5432`，Oracle `1521`，Redis `6379`，MongoDB `27017`，Elasticsearch `9200`，ClickHouse HTTP `8123`，ClickHouse Native `9000`
 
 Redis 会按 `SCAN` 枚举 key，并按类型读取 `string`、`hash`、`list`、`set`、`zset` 的样例内容。终端和 Excel 使用 Redis 专用输出结构，列为 `Target`、`DB`、`Key`、`Type`、`TTL`、`Path/Field`、`Value`、`命中类型`、`敏感级别`、`判断依据`；Excel 会生成 `Redis 汇总` 和 `Redis Keys` 两个 Sheet。
+
+MongoDB 与 Elasticsearch 会按文档字段路径展开样例内容，并复用字段名规则与内容正则进行判定。ClickHouse 会通过系统表枚举文本/JSON/枚举/IP/UUID 等可扫描列，并按 HTTP 或 Native 协议执行同一套表扫描逻辑。
 
 协议兼容数据库会复用 MySQL 或 PostgreSQL 的连接协议、代理拨号和元数据扫描方式。达梦 DM、GBase 8s、神通等需要专用驱动、ODBC、CGO 或无法确认代理拨号能力的数据库暂不内置，避免破坏当前多平台发布包。
 

@@ -1,0 +1,70 @@
+---
+id: dbx-phone-content
+info:
+  name: Phone Number
+  severity: medium
+  tags: dbx,content,pii,phone
+dbx:
+  target: content
+  kind: phone
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?x)(?:\+?86[-\s]?)?1[3-9]\d{9}
+---
+id: dbx-email-content
+info:
+  name: Email Address
+  severity: medium
+  tags: dbx,content,pii,email
+dbx:
+  target: content
+  kind: email
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}
+---
+id: dbx-id-card-content
+info:
+  name: ID Card Number
+  severity: high
+  tags: dbx,content,pii,id-card
+dbx:
+  target: content
+  kind: id-card
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)\b\d{17}[\dxX]\b
+---
+id: dbx-bank-card-content
+info:
+  name: Bank Card Number
+  severity: high
+  tags: dbx,content,pii,bank-card
+dbx:
+  target: content
+  kind: bank-card
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - \b(?:\d[ -]?){13,19}\b
+---
+id: dbx-ipv4-content
+info:
+  name: IPv4 Address
+  severity: medium
+  tags: dbx,content,network,ip
+dbx:
+  target: content
+  kind: ip-address
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - \b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b

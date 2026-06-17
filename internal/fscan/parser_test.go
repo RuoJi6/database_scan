@@ -156,3 +156,26 @@ system:scanpass`)
 		t.Fatalf("unexpected target types: %#v", targets)
 	}
 }
+
+func TestParseTextAcceptsDocumentAndClickHouseTypes(t *testing.T) {
+	targets, err := ParseText(`mongo 10.211.55.16:27017
+root:scanpass
+es 10.211.55.16:9200
+clickhouse 10.211.55.16:9000 default:scanpass
+ch-http 10.211.55.16:8123 default:scanpass`)
+	if err != nil {
+		t.Fatalf("ParseText returned error: %v", err)
+	}
+	if len(targets) != 4 {
+		t.Fatalf("expected 4 targets, got %#v", targets)
+	}
+	if targets[0].Type != "mongodb" || targets[0].User != "root" {
+		t.Fatalf("unexpected mongodb target: %#v", targets[0])
+	}
+	if targets[1].Type != "elasticsearch" || targets[1].User != "" || targets[1].Password != "" {
+		t.Fatalf("unexpected elasticsearch target: %#v", targets[1])
+	}
+	if targets[2].Type != "clickhouse-native" || targets[3].Type != "clickhouse-http" {
+		t.Fatalf("unexpected clickhouse targets: %#v", targets)
+	}
+}

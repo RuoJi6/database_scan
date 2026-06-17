@@ -45,7 +45,7 @@ func Parse(r io.Reader) ([]Target, error) {
 		lineNo++
 		line := scanner.Text()
 		target, ok := ParseLine(line, lineNo)
-		if ok && hasPendingManual && pendingManual.Type == "redis" {
+		if ok && hasPendingManual && allowEmptyCredential(pendingManual.Type) {
 			addTarget(&targets, seen, pendingManual)
 			hasPendingManual = false
 		}
@@ -57,7 +57,7 @@ func Parse(r io.Reader) ([]Target, error) {
 		}
 		if !ok {
 			if target, ok = parseManualHeader(line, lineNo); ok {
-				if hasPendingManual && pendingManual.Type == "redis" {
+				if hasPendingManual && allowEmptyCredential(pendingManual.Type) {
 					addTarget(&targets, seen, pendingManual)
 				}
 				pendingManual = target
@@ -70,7 +70,7 @@ func Parse(r io.Reader) ([]Target, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if hasPendingManual && pendingManual.Type == "redis" {
+	if hasPendingManual && allowEmptyCredential(pendingManual.Type) {
 		addTarget(&targets, seen, pendingManual)
 	}
 	return targets, nil
@@ -159,7 +159,7 @@ func parseNewLine(line string, lineNo int) (Target, bool) {
 			continue
 		}
 		user, pass, ok := splitCredential(fields[i+2])
-		if !ok && dbType == "redis" {
+		if !ok && allowEmptyCredential(dbType) {
 			user, pass, ok = "", fields[i+2], true
 		}
 		if ok {
@@ -194,7 +194,7 @@ func completeManualTarget(target Target, line string) (Target, bool) {
 		return Target{}, false
 	}
 	user, pass, ok := splitCredential(fields[0])
-	if !ok && target.Type == "redis" {
+	if !ok && allowEmptyCredential(target.Type) {
 		user, pass, ok = "", fields[0], fields[0] != ""
 	}
 	if !ok {
@@ -256,6 +256,10 @@ func normalizeRedisCredential(dbType, user, pass string) (string, string) {
 	return user, pass
 }
 
+func allowEmptyCredential(dbType string) bool {
+	return dbType == "redis" || dbType == "elasticsearch"
+}
+
 func normalizeType(s string) (string, bool) {
 	switch strings.ToLower(strings.Trim(strings.TrimSpace(s), "[]:+")) {
 	case "mysql":
@@ -292,6 +296,14 @@ func normalizeType(s string) (string, bool) {
 		return "oracle", true
 	case "redis":
 		return "redis", true
+	case "mongo", "mongodb":
+		return "mongodb", true
+	case "elastic", "elasticsearch", "es":
+		return "elasticsearch", true
+	case "clickhouse", "clickhouse-native", "ch-native":
+		return "clickhouse-native", true
+	case "clickhouse-http", "ch-http":
+		return "clickhouse-http", true
 	default:
 		return "", false
 	}

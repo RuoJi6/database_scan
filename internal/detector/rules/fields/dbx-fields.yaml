@@ -1,0 +1,168 @@
+---
+id: dbx-phone-field
+info:
+  name: Phone Field
+  severity: medium
+  tags: dbx,field,pii,phone
+dbx:
+  target: field
+  kind: phone
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(phone|mobile|tel|手机号|手机)
+---
+id: dbx-email-field
+info:
+  name: Email Field
+  severity: medium
+  tags: dbx,field,pii,email
+dbx:
+  target: field
+  kind: email
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(email|mail|邮箱)
+---
+id: dbx-id-card-field
+info:
+  name: ID Card Field
+  severity: high
+  tags: dbx,field,pii,id-card
+dbx:
+  target: field
+  kind: id-card
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(idcard|id_card|identity|身份证|证件)
+---
+id: dbx-bank-card-field
+info:
+  name: Bank Card Field
+  severity: high
+  tags: dbx,field,pii,bank-card
+dbx:
+  target: field
+  kind: bank-card
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(bank|card_no|银行卡|卡号)
+---
+id: dbx-password-field
+info:
+  name: Password Field
+  severity: high
+  tags: dbx,field,secret,password
+dbx:
+  target: field
+  kind: password-secret
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(password|passwd|pwd|pass|密码)
+---
+id: dbx-token-field
+info:
+  name: Token Field
+  severity: high
+  tags: dbx,field,secret,token
+dbx:
+  target: field
+  kind: token-secret
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(token|secret|apikey|api_key|access_key|private_key|密钥)
+---
+id: dbx-address-field
+info:
+  name: Address Field
+  severity: low
+  tags: dbx,field,pii,address
+dbx:
+  target: field
+  kind: address
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(address|addr|地址)
+---
+id: dbx-username-field
+info:
+  name: Username Field
+  severity: low
+  tags: dbx,field,pii,username
+dbx:
+  target: field
+  kind: username
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(username|user_name|nickname|realname|actor|operator|姓名|用户名)
+---
+id: dbx-account-field
+info:
+  name: Account Field
+  severity: low
+  tags: dbx,field,account
+dbx:
+  target: field
+  kind: account
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(account|acct|账号|账户)
+---
+id: dbx-ip-field
+info:
+  name: IP Address Field
+  severity: medium
+  tags: dbx,field,network,ip
+dbx:
+  target: field
+  kind: ip-address
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(^|[^a-z0-9_])(ip|client_ip|remote_ip|source_ip|ip_addr|ip_address)([^a-z0-9_]|$)|ip地址|来源ip
+---
+id: dbx-business-id-field
+info:
+  name: Business Identifier Field
+  severity: low
+  tags: dbx,field,business
+dbx:
+  target: field
+  kind: business-identifier
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(customer_id|customerid|cust_id|entity_id|entityid|event_id|eventid|order_no|orderno|order_id|orderid|finding_id|findingid|asset_id|assetid|trace_id|traceid|request_id|requestid|session_id|sessionid|客户id|订单号|事件id|实体id|资产id)
+---
+id: dbx-risk-evidence-field
+info:
+  name: Risk Evidence Field
+  severity: medium
+  tags: dbx,field,risk,evidence
+dbx:
+  target: field
+  kind: risk-evidence
+file:
+  - extractors:
+      - type: regex
+        regex:
+          - (?i)(evidence|risk_score|risk_decision|severity|detector|message|tags|finding|audit_log|audit_logs|风险|证据|审计|日志)

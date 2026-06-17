@@ -297,6 +297,35 @@ func TestParseArgsAcceptsRedisWithoutUserOrPassword(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsElasticsearchWithoutUser(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "es",
+		"--host", "192.0.2.10",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Type != "elasticsearch" || cfg.Port != 9200 {
+		t.Fatalf("unexpected elasticsearch config: %#v", cfg)
+	}
+}
+
+func TestParseArgsPreservesMongoAuthDatabase(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--type", "mongo",
+		"--host", "192.0.2.10",
+		"--user", "root",
+		"--password", "secret",
+		"--auth-database", "admin",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cfg.Type != "mongodb" || cfg.Port != 27017 || cfg.AuthDatabase != "admin" {
+		t.Fatalf("unexpected mongodb config: %#v", cfg)
+	}
+}
+
 func TestParseArgsAcceptsExplicitEmptyPassword(t *testing.T) {
 	cfg, err := parseArgs([]string{
 		"--type", "mysql",

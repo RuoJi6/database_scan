@@ -33,6 +33,7 @@ type Config struct {
 	User           string
 	Password       string
 	Database       string
+	AuthDatabase   string
 	Table          string
 	Proxy          string
 	Mode           string
@@ -59,12 +60,13 @@ func parseArgs(args []string) (Config, error) {
 	args, target := splitTargetArg(args)
 	fs := flag.NewFlagSet("database_scan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres, redis")
+	fs.StringVar(&cfg.Type, "type", "", "database type: mysql, mssql, postgres, redis, mongodb, elasticsearch, clickhouse-http, clickhouse-native")
 	fs.StringVar(&cfg.Host, "host", "", "database host")
 	fs.IntVar(&cfg.Port, "port", 0, "database port")
 	fs.StringVar(&cfg.User, "user", "", "database username")
 	fs.StringVar(&cfg.Password, "password", "", "database password")
 	fs.StringVar(&cfg.Database, "database", "", "initial database; comma-separated values are supported")
+	fs.StringVar(&cfg.AuthDatabase, "auth-database", "", "authentication database; mainly for MongoDB authSource")
 	fs.StringVar(&cfg.Table, "table", "", "scan only these tables; supports table, schema.table, and comma-separated values")
 	fs.StringVar(&cfg.Proxy, "proxy", "", "proxy url: socks5://user:pass@host:port or http://user:pass@host:port")
 	fs.StringVar(&cfg.Mode, "mode", "field-content", "scan mode: field-content, field-name, content, all")
@@ -106,7 +108,7 @@ func parseArgs(args []string) (Config, error) {
 			cfg.Host = fs.Arg(0)
 		}
 	}
-	cfg.Type = strings.ToLower(strings.TrimSpace(cfg.Type))
+	cfg.Type = canonicalType(strings.ToLower(strings.TrimSpace(cfg.Type)))
 	cfg.Mode = strings.ToLower(strings.TrimSpace(cfg.Mode))
 	cfg.TextEncoding = textfix.NormalizeEncoding(cfg.TextEncoding)
 	if !textfix.IsSupportedEncoding(cfg.TextEncoding) {
@@ -120,17 +122,20 @@ func parseArgs(args []string) (Config, error) {
 	if err := normalizeTarget(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.Fscan == "" && (cfg.Type == "" || cfg.Host == "" || (cfg.User == "" && cfg.Type != "redis")) {
+	if cfg.Fscan == "" && (cfg.Type == "" || cfg.Host == "" || (cfg.User == "" && requiresUser(cfg.Type))) {
 		return cfg, fmt.Errorf("--type, --host and --user are required")
 	}
 	if cfg.Port == 0 && cfg.Type != "" {
-		adapter, err := db.NewAdapter(cfg.Type)
-		if err != nil {
-			return cfg, err
+		cfg.Port = defaultPort(cfg.Type)
+		if cfg.Port == 0 {
+			adapter, err := db.NewAdapter(cfg.Type)
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Port = adapter.DefaultPort()
 		}
-		cfg.Port = adapter.DefaultPort()
 	}
-	if cfg.Fscan == "" && !passwordFlagSet && cfg.Type != "redis" {
+	if cfg.Fscan == "" && !passwordFlagSet && requiresUser(cfg.Type) {
 		fmt.Fprint(os.Stderr, "Password: ")
 		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
@@ -202,14 +207,14 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	fmt.Fprintln(w, c("90", "数据库敏感信息扫描与整行样例导出工具"))
 	fmt.Fprintf(w, "项目地址: %s\n\n", url)
 	fmt.Fprintf(w, "%s\n", section("Usage"))
-	fmt.Fprintf(w, "  %s --type <mysql|mssql|postgres|redis|oracle|oceanbase|opengauss|kingbase> <host:port> --user <user> [options]\n\n", projectName)
+	fmt.Fprintf(w, "  %s --type <mysql|mssql|postgres|redis|oracle|mongodb|elasticsearch|clickhouse-http|clickhouse-native> <host:port> --user <user> [options]\n\n", projectName)
 	fmt.Fprintf(w, "%s\n", section("Examples"))
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb\n", projectName)
 	fmt.Fprintf(w, "  %s --type mssql 192.0.2.10:1433 --user sa --password pass --database appdb --table dbo.Users --output result.xlsx\n", projectName)
 	fmt.Fprintf(w, "  %s --type mysql 192.0.2.20:3306 --user root --password pass --database app,audit --table users,orders\n", projectName)
 	fmt.Fprintf(w, "  %s --type postgres --host 198.51.100.10 --user dev --password pass --level high --workers 4\n\n", projectName)
 	fmt.Fprintf(w, "%s\n", section("Target"))
-	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、redis、oracle、oceanbase、opengauss、kingbase")
+	helpFlag(w, flagName("--type"), "数据库类型：mysql、mssql、postgres、redis、oracle、mongodb、elasticsearch、clickhouse-http、clickhouse-native")
 	helpFlag(w, flagName("--host"), "目标地址；也支持把 host:port 作为位置参数")
 	helpFlag(w, flagName("--port"), "目标端口，不填时使用数据库默认端口")
 	helpFlag(w, flagName("--proxy"), "代理地址：socks5://... 或 http://...")
@@ -217,8 +222,9 @@ func printHelp(w io.Writer, color bool, banner bool) {
 	fmt.Fprintf(w, "\n%s\n", section("Auth"))
 	helpFlag(w, flagName("--user"), "数据库用户名")
 	helpFlag(w, flagName("--password"), "数据库密码；允许为空；显式空密码可传 --password ''，不传时隐藏交互输入")
+	helpFlag(w, flagName("--auth-database"), "认证库；主要用于 MongoDB authSource")
 	fmt.Fprintf(w, "\n%s\n", section("Scan"))
-	helpFlag(w, flagName("--database"), "指定数据库；多个用逗号分隔；不指定时扫描全部可访问数据库")
+	helpFlag(w, flagName("--database"), "指定数据库/索引；多个用逗号分隔；不指定时扫描全部可访问对象")
 	helpFlag(w, flagName("--table"), "只扫描指定表，需要同时指定 --database；支持 Users、dbo.Users，多个用逗号分隔")
 	helpFlag(w, flagName("--fscan"), "解析 fscan 扫描结果中的数据库凭据并批量接入扫描")
 	helpFlag(w, flagName("--mode"), "扫描模式：field-content、field-name、content、all；默认 field-content")
@@ -272,6 +278,56 @@ func bannerTemplates() []string {
 	}
 }
 
+func canonicalType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "mongo", "mongodb":
+		return "mongodb"
+	case "elastic", "elasticsearch", "es":
+		return "elasticsearch"
+	case "clickhouse", "clickhouse-native", "ch-native":
+		return "clickhouse-native"
+	case "clickhouse-http", "ch-http":
+		return "clickhouse-http"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func isDocumentType(value string) bool {
+	switch canonicalType(value) {
+	case "mongodb", "elasticsearch":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresUser(value string) bool {
+	switch canonicalType(value) {
+	case "redis", "elasticsearch":
+		return false
+	default:
+		return true
+	}
+}
+
+func defaultPort(value string) int {
+	switch canonicalType(value) {
+	case "redis":
+		return 6379
+	case "mongodb":
+		return 27017
+	case "elasticsearch":
+		return 9200
+	case "clickhouse-http":
+		return 8123
+	case "clickhouse-native":
+		return 9000
+	default:
+		return 0
+	}
+}
+
 func normalizeTarget(cfg *Config) error {
 	cfg.Host = strings.TrimSpace(cfg.Host)
 	if cfg.Host == "" {
@@ -302,7 +358,7 @@ func normalizeTarget(cfg *Config) error {
 func splitTargetArg(args []string) ([]string, string) {
 	valueFlags := map[string]bool{
 		"type": true, "host": true, "port": true, "user": true, "password": true,
-		"database": true, "table": true, "proxy": true, "mode": true, "level": true, "limit": true, "output": true, "workers": true,
+		"database": true, "auth-database": true, "table": true, "proxy": true, "mode": true, "level": true, "limit": true, "output": true, "workers": true,
 		"timeout": true, "sql": true, "text-encoding": true,
 		"fscan": true,
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -77,6 +78,32 @@ func runSingle(ctx context.Context, cfg Config) error {
 			return err
 		}
 		printRedisResult(result, !cfg.NoColor)
+		if cfg.Output != "" {
+			if err := output.WriteXLSX(cfg.Output, result); err != nil {
+				return fmt.Errorf("write xlsx output: %w", err)
+			}
+			outputPath, err := filepath.Abs(cfg.Output)
+			if err != nil {
+				outputPath = cfg.Output
+			}
+			fmt.Fprintf(os.Stdout, "\n已写入表格文件: %s\n", outputPath)
+		}
+		return nil
+	}
+	if isDocumentType(cfg.Type) {
+		if cfg.SQL != "" {
+			return fmt.Errorf("custom SQL only supports SQL database targets")
+		}
+		var progressWriter io.Writer
+		if !cfg.NoProgress {
+			progressWriter = os.Stderr
+		}
+		info, result, err := scanDocumentTarget(ctx, cfg, progressWriter)
+		if err != nil {
+			return err
+		}
+		printServerInfo(info)
+		printScanResult(result, !cfg.NoColor)
 		if cfg.Output != "" {
 			if err := output.WriteXLSX(cfg.Output, result); err != nil {
 				return fmt.Errorf("write xlsx output: %w", err)
@@ -283,6 +310,18 @@ func runFscan(ctx context.Context, cfg Config) error {
 func scanAnyTarget(ctx context.Context, cfg Config) (scanner.Result, error) {
 	if cfg.Type == "redis" {
 		return scanRedisTarget(ctx, cfg)
+	}
+	if isDocumentType(cfg.Type) {
+		var progressWriter io.Writer
+		if !cfg.NoProgress {
+			progressWriter = os.Stderr
+		}
+		info, result, err := scanDocumentTarget(ctx, cfg, progressWriter)
+		if err != nil {
+			return scanner.Result{}, err
+		}
+		printServerInfo(info)
+		return result, nil
 	}
 	return scanTarget(ctx, cfg)
 }

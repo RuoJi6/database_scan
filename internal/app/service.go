@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"database_scan/internal/db"
 	"database_scan/internal/detector"
+	"database_scan/internal/docscan"
 	fscanparse "database_scan/internal/fscan"
 	"database_scan/internal/output"
 	iproxy "database_scan/internal/proxy"
@@ -27,6 +29,7 @@ type ScanRequest struct {
 	User          string
 	Password      string
 	Database      string
+	AuthDatabase  string
 	Table         string
 	Proxy         string
 	Mode          string
@@ -131,6 +134,8 @@ func SupportedDatabaseTypes() []string {
 		"postgres", "opengauss", "gaussdb", "kingbase", "highgo", "polardb-postgres",
 		"oracle",
 		"redis",
+		"mongodb", "elasticsearch",
+		"clickhouse-http", "clickhouse-native",
 	}
 }
 
@@ -168,12 +173,13 @@ func ValidateScanRequest(req ScanRequest) (Config, error) {
 		return Config{}, fmt.Errorf("parse timeout: %w", err)
 	}
 	cfg := Config{
-		Type:          strings.ToLower(strings.TrimSpace(req.Type)),
+		Type:          canonicalType(strings.ToLower(strings.TrimSpace(req.Type))),
 		Host:          strings.TrimSpace(req.Host),
 		Port:          req.Port,
 		User:          strings.TrimSpace(req.User),
 		Password:      req.Password,
 		Database:      strings.TrimSpace(req.Database),
+		AuthDatabase:  strings.TrimSpace(req.AuthDatabase),
 		Table:         strings.TrimSpace(req.Table),
 		Proxy:         strings.TrimSpace(req.Proxy),
 		Mode:          strings.ToLower(strings.TrimSpace(req.Mode)),
@@ -196,15 +202,18 @@ func ValidateScanRequest(req ScanRequest) (Config, error) {
 	if err := normalizeTarget(&cfg); err != nil {
 		return Config{}, err
 	}
-	if cfg.Fscan == "" && cfg.FscanText == "" && (cfg.Type == "" || cfg.Host == "" || (cfg.User == "" && cfg.Type != "redis")) {
+	if cfg.Fscan == "" && cfg.FscanText == "" && (cfg.Type == "" || cfg.Host == "" || (cfg.User == "" && requiresUser(cfg.Type))) {
 		return Config{}, fmt.Errorf("type, host and user are required")
 	}
 	if cfg.Port == 0 && cfg.Type != "" {
-		adapter, err := db.NewAdapter(cfg.Type)
-		if err != nil {
-			return Config{}, err
+		cfg.Port = defaultPort(cfg.Type)
+		if cfg.Port == 0 {
+			adapter, err := db.NewAdapter(cfg.Type)
+			if err != nil {
+				return Config{}, err
+			}
+			cfg.Port = adapter.DefaultPort()
 		}
-		cfg.Port = adapter.DefaultPort()
 	}
 	if cfg.Limit <= 0 {
 		return Config{}, fmt.Errorf("limit must be greater than 0")
@@ -386,6 +395,19 @@ func scanAnyTargetService(ctx context.Context, cfg Config, hooks ServiceHooks, l
 		}
 		return result, nil, &info, nil
 	}
+	if isDocumentType(cfg.Type) {
+		info, result, err := scanDocumentTarget(ctx, cfg, progressLogWriter{log: log})
+		if err != nil {
+			return scanner.Result{}, nil, nil, err
+		}
+		log("info", fmt.Sprintf("已连接 %s %s:%d", cfg.Type, cfg.Host, cfg.Port))
+		if hooks.OnTable != nil {
+			for _, table := range result.Tables {
+				hooks.OnTable(table)
+			}
+		}
+		return result, &info, nil, nil
+	}
 	adapter, err := db.NewAdapter(cfg.Type)
 	if err != nil {
 		return scanner.Result{}, nil, nil, err
@@ -461,7 +483,7 @@ func RunCustomSQL(ctx context.Context, req ScanRequest) (CustomSQLResult, error)
 	if strings.TrimSpace(cfg.SQL) == "" {
 		return CustomSQLResult{}, fmt.Errorf("sql is required")
 	}
-	if cfg.Type == "redis" || cfg.Fscan != "" || cfg.FscanText != "" {
+	if cfg.Type == "redis" || isDocumentType(cfg.Type) || cfg.Fscan != "" || cfg.FscanText != "" {
 		return CustomSQLResult{}, fmt.Errorf("custom SQL only supports SQL database targets")
 	}
 	adapter, err := db.NewAdapter(cfg.Type)
@@ -508,6 +530,16 @@ func TestConnection(ctx context.Context, req ScanRequest) (ConnectionTestResult,
 			Database: info.DB, User: cfg.User, Proxy: cfg.Proxy, Version: info.Version, ResolvedAddr: info.ResolvedIP, ServerTime: info.ServerTime,
 		}, nil
 	}
+	if isDocumentType(cfg.Type) {
+		info, err := testDocumentTarget(testCtx, cfg)
+		if err != nil {
+			return ConnectionTestResult{}, fmt.Errorf("test database connection: %w", err)
+		}
+		return ConnectionTestResult{
+			Success: true, Message: "数据库连接测试通过", Type: cfg.Type, Host: cfg.Host, Port: cfg.Port,
+			Database: info.CurrentDB, User: info.CurrentUser, Proxy: cfg.Proxy, Version: info.Version, ResolvedAddr: info.ResolvedAddr, ServerTime: info.ServerTime,
+		}, nil
+	}
 	adapter, err := db.NewAdapter(cfg.Type)
 	if err != nil {
 		return ConnectionTestResult{}, err
@@ -538,6 +570,50 @@ func TestConnection(ctx context.Context, req ScanRequest) (ConnectionTestResult,
 		Success: true, Message: "数据库连接测试通过", Type: cfg.Type, Host: cfg.Host, Port: cfg.Port,
 		Database: info.CurrentDB, User: info.CurrentUser, Proxy: cfg.Proxy, Version: info.Version, ResolvedAddr: info.ResolvedAddr, ServerTime: info.ServerTime,
 	}, nil
+}
+
+func scanDocumentTarget(ctx context.Context, cfg Config, progress io.Writer) (db.ServerInfo, scanner.Result, error) {
+	docCfg := docscanConfig(cfg, progress)
+	switch cfg.Type {
+	case "mongodb":
+		return docscan.ScanMongo(ctx, docCfg)
+	case "elasticsearch":
+		return docscan.ScanElasticsearch(ctx, docCfg)
+	default:
+		return db.ServerInfo{}, scanner.Result{}, fmt.Errorf("unsupported document database type %q", cfg.Type)
+	}
+}
+
+func testDocumentTarget(ctx context.Context, cfg Config) (db.ServerInfo, error) {
+	docCfg := docscanConfig(cfg, nil)
+	switch cfg.Type {
+	case "mongodb":
+		return docscan.TestMongoConnection(ctx, docCfg)
+	case "elasticsearch":
+		return docscan.TestElasticsearchConnection(ctx, docCfg)
+	default:
+		return db.ServerInfo{}, fmt.Errorf("unsupported document database type %q", cfg.Type)
+	}
+}
+
+func docscanConfig(cfg Config, progress io.Writer) docscan.Config {
+	return docscan.Config{
+		Type:          cfg.Type,
+		Host:          cfg.Host,
+		Port:          cfg.Port,
+		User:          cfg.User,
+		Password:      cfg.Password,
+		Database:      cfg.Database,
+		AuthDatabase:  cfg.AuthDatabase,
+		Proxy:         cfg.Proxy,
+		Timeout:       cfg.Timeout,
+		Limit:         cfg.Limit,
+		Level:         cfg.Level,
+		Mask:          cfg.Mask,
+		TextEncoding:  cfg.TextEncoding,
+		IncludeSystem: cfg.IncludeSystem,
+		Progress:      progress,
+	}
 }
 
 func openDatabaseWithRetry(ctx context.Context, adapter db.Adapter, cfg db.Config, dialer db.ContextDialer, log func(string, string)) (*sql.DB, error) {
@@ -721,7 +797,7 @@ func writeOutput(path string, result scanner.Result) (string, error) {
 func requestFromConfig(cfg Config) ScanRequest {
 	return ScanRequest{
 		Type: cfg.Type, Host: cfg.Host, Port: cfg.Port, User: cfg.User, Password: cfg.Password,
-		Database: cfg.Database, Table: cfg.Table, Proxy: cfg.Proxy, Mode: cfg.Mode, Level: string(cfg.Level),
+		Database: cfg.Database, AuthDatabase: cfg.AuthDatabase, Table: cfg.Table, Proxy: cfg.Proxy, Mode: cfg.Mode, Level: string(cfg.Level),
 		Limit: cfg.Limit, SQL: cfg.SQL, Output: cfg.Output, Fscan: cfg.Fscan, SplitOutput: cfg.SplitOutput,
 		FscanText:     cfg.FscanText,
 		IncludeSystem: cfg.IncludeSystem, Mask: cfg.Mask, TextEncoding: cfg.TextEncoding, Workers: cfg.Workers, Timeout: cfg.Timeout.String(),

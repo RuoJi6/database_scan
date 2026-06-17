@@ -50,6 +50,7 @@
     User: string;
     Password: string;
     Database: string;
+    AuthDatabase: string;
     Table: string;
     Proxy: string;
     Mode: string;
@@ -146,6 +147,7 @@
     User: '',
     Password: '',
     Database: '',
+    AuthDatabase: '',
     Table: '',
     Proxy: '',
     Mode: 'field-content',
@@ -207,7 +209,11 @@
     highgo: 5432,
     'polardb-postgres': 5432,
     oracle: 1521,
-    redis: 6379
+    redis: 6379,
+    mongodb: 27017,
+    elasticsearch: 9200,
+    'clickhouse-http': 8123,
+    'clickhouse-native': 9000
   };
 
   let vaultStatus: VaultStatus = { Initialized: false, Unlocked: false, Path: '' };
@@ -785,7 +791,7 @@
       Type: target.Type,
       Host: target.Host,
       Port: Number(target.Port),
-      User: target.Type === 'redis' ? '' : target.User,
+      User: requiresUser(target.Type) ? target.User : '',
       Password: target.Password,
       Proxy: draftRequest.Proxy,
       Fscan: '',
@@ -851,7 +857,7 @@
   function validateConnection(next: ScanRequest) {
     if (!next.Type?.trim()) return '请选择数据库类型';
     if (!next.Host?.trim()) return '请填写 Host';
-    if (next.Type !== 'redis' && !next.User?.trim()) return '请填写账号；Redis 可留空';
+    if (requiresUser(next.Type) && !next.User?.trim()) return '请填写账号；Redis 和 Elasticsearch 可留空';
     if (next.Table?.trim() && !next.Database?.trim()) return '指定表时必须同时填写指定库';
     return '';
   }
@@ -862,7 +868,7 @@
       Type: type || 'mysql',
       Host: '',
       Port: defaultPorts[type] ?? 3306,
-      User: type === 'redis' ? '' : '',
+      User: requiresUser(type) ? '' : '',
       Password: '',
       ShowPassword: false
     };
@@ -895,7 +901,7 @@
 
   function changeDraftType() {
     draftRequest.Port = defaultPorts[draftRequest.Type] ?? draftRequest.Port;
-    if (draftRequest.Type === 'redis') draftRequest.User = '';
+    if (!requiresUser(draftRequest.Type)) draftRequest.User = '';
   }
 
   function selectDraftType(type: string) {
@@ -910,7 +916,7 @@
     if (!target) return;
     target.Type = type;
     target.Port = defaultPorts[type] ?? target.Port;
-    if (type === 'redis') target.User = '';
+    if (!requiresUser(type)) target.User = '';
     manualTargets = [...manualTargets];
     activeDbTypeMenu = '';
   }
@@ -945,7 +951,7 @@
     if (!target.Type) return `第 ${rowNo} 个目标请选择数据库类型`;
     if (!target.Host.trim()) return `第 ${rowNo} 个目标请填写 Host`;
     if (!target.Port || Number(target.Port) <= 0) return `第 ${rowNo} 个目标请填写有效端口`;
-    if (target.Type !== 'redis' && !target.User.trim()) return `第 ${rowNo} 个目标请填写账号`;
+    if (requiresUser(target.Type) && !target.User.trim()) return `第 ${rowNo} 个目标请填写账号`;
     return '';
   }
 
@@ -957,7 +963,7 @@
   function manualLine(target: ManualTarget) {
     const host = target.Host.trim();
     const port = Number(target.Port);
-    if (target.Type === 'redis' && !target.User.trim()) {
+    if (!requiresUser(target.Type) && !target.User.trim()) {
       return target.Password.trim() ? `${target.Type} ${host}:${port} ${target.Password.trim()}` : `${target.Type} ${host}:${port}`;
     }
     return `${target.Type} ${host}:${port} ${target.User.trim()}:${target.Password ?? ''}`;
@@ -972,7 +978,7 @@
       Type: target.Type || 'mysql',
       Host: target.Host === '-' ? '' : target.Host,
       Port: Number(target.Port) || defaultPorts[target.Type] || 3306,
-      User: target.Type === 'redis' || target.User === '-' ? '' : target.User,
+      User: !requiresUser(target.Type) || target.User === '-' ? '' : target.User,
       Password: target.Password || '',
       ShowPassword: false
     }));
@@ -1168,12 +1174,22 @@
 
   function isKnownDBType(value: string) {
     const type = normalizeTargetType(value);
-    return Boolean(type && (dbTypes.includes(type) || defaultPorts[type] || type === 'redis'));
+    return Boolean(type && (dbTypes.includes(type) || defaultPorts[type]));
   }
 
   function normalizeTargetType(value: string) {
     const type = value.toLowerCase().replace(/^[\[\]+:]+|[\[\]+:]+$/g, '');
-    return type === 'postgresql' ? 'postgres' : type;
+    if (type === 'postgresql') return 'postgres';
+    if (type === 'mongo') return 'mongodb';
+    if (type === 'elastic' || type === 'es') return 'elasticsearch';
+    if (type === 'clickhouse' || type === 'ch-native') return 'clickhouse-native';
+    if (type === 'ch-http') return 'clickhouse-http';
+    return type;
+  }
+
+  function requiresUser(type: string) {
+    const normalized = normalizeTargetType(type);
+    return normalized !== 'redis' && normalized !== 'elasticsearch';
   }
 
   function parseTargetLine(line: string, index: number) {
@@ -1184,7 +1200,7 @@
         const hostPort = splitHostPort(parts[partIndex + 1] || '');
         if (hostPort) {
           const parsedCredential = splitCredential(parts[partIndex + 2] || '', type);
-          if (parsedCredential || type === 'redis') {
+          if (parsedCredential || !requiresUser(type)) {
             return targetFromParts(index, type, hostPort.host, hostPort.port, parsedCredential?.user || '', parsedCredential?.password || '', line);
           }
         }
@@ -1197,7 +1213,7 @@
       if (savedHostPort && isKnownDBType(parts[partIndex + 1] || '')) {
         const type = normalizeTargetType(parts[partIndex + 1]);
         const parsedCredential = splitCredential(parts[partIndex + 2] || '', type);
-        if (parsedCredential || type === 'redis') {
+        if (parsedCredential || !requiresUser(type)) {
           return targetFromParts(index, type, savedHostPort.host, savedHostPort.port, parsedCredential?.user || '', parsedCredential?.password || '', line);
         }
       }
@@ -1215,12 +1231,12 @@
   }
 
   function splitCredential(value: string, type: string) {
-    if (!value && type === 'redis') return { user: '', password: '' };
+    if (!value && !requiresUser(type)) return { user: '', password: '' };
     const divider = value.includes(':') ? value.indexOf(':') : value.indexOf('/');
-    if (divider < 0) return type === 'redis' && value ? { user: '', password: value } : null;
+    if (divider < 0) return !requiresUser(type) && value ? { user: '', password: value } : null;
     const user = value.slice(0, divider);
     const password = value.slice(divider + 1);
-    if (!user && type !== 'redis') return null;
+    if (!user && requiresUser(type)) return null;
     return type === 'redis' && user.toLowerCase() === 'root' ? { user: '', password } : { user, password };
   }
 
@@ -1235,7 +1251,7 @@
   }
 
   function targetFromParts(index: number, type: string, host: string, port: string, user: string, password: string, raw: string) {
-    return { Index: index + 1, Type: type, Host: host || '-', Port: port || '-', User: type === 'redis' ? '-' : user || '-', Password: password || '', Raw: raw };
+    return { Index: index + 1, Type: type, Host: host || '-', Port: port || '-', User: requiresUser(type) ? user || '-' : '-', Password: password || '', Raw: raw };
   }
 
   function connectionLinesForTask(task: GUITask) {
@@ -1247,7 +1263,7 @@
   }
 
   function connectionLineFromTarget(target: { Type: string; Host: string; Port: string; User: string; Password: string }) {
-    const auth = target.Type === 'redis' ? target.Password || '-' : `${target.User || '-'}/${target.Password || '-'}`;
+    const auth = requiresUser(target.Type) ? `${target.User || '-'}/${target.Password || '-'}` : target.Password || '-';
     return `${target.Type} ${target.Host}:${target.Port || '-'} ${auth}`;
   }
 
@@ -1255,7 +1271,7 @@
     const type = request.Type || 'db';
     const host = request.Host || '-';
     const port = request.Port || '-';
-    const auth = type === 'redis' ? request.Password || '-' : `${request.User || '-'}/${request.Password || '-'}`;
+    const auth = requiresUser(type) ? `${request.User || '-'}/${request.Password || '-'}` : request.Password || '-';
     return `${type} ${host}:${port} ${auth}`;
   }
 
@@ -1342,7 +1358,7 @@
   function normalizeError(error: unknown) {
     const message = String(error).replace(/^Error:\s*/, '');
     if (message.includes('password is incorrect')) return '启动密码不正确，或本地任务库已损坏';
-    if (message.includes('type, host and user are required')) return '请检查数据库类型、Host 和账号是否已填写；Redis 账号可以留空。';
+    if (message.includes('type, host and user are required')) return '请检查数据库类型、Host 和账号是否已填写；Redis 和 Elasticsearch 账号可以留空。';
     if (message.includes('sql is required')) return '请填写 SQL 语句。';
     return message;
   }
@@ -1805,7 +1821,7 @@
                       </div>
                       <input bind:value={target.Host} placeholder="Host" />
                       <input type="number" bind:value={target.Port} placeholder="端口" />
-                      <input bind:value={target.User} placeholder="账号" disabled={target.Type === 'redis'} />
+                      <input bind:value={target.User} placeholder="账号" disabled={!requiresUser(target.Type)} />
                       <input type={target.ShowPassword ? 'text' : 'password'} value={target.Password} on:input={(event) => updateManualPassword(index, event)} placeholder="密码" />
                       <button on:click={() => ((target.ShowPassword = !target.ShowPassword), (manualTargets = [...manualTargets]))}>{target.ShowPassword ? '隐藏' : '查看'}</button>
                       <button on:click={() => testManualTargetConnection(index)} disabled={testingConnection && manualTestingIndex === index}>{testingConnection && manualTestingIndex === index ? '测试中' : '测试'}</button>
@@ -1857,7 +1873,7 @@
                 </label>
                 <label>
                   <span>账号</span>
-                  <input bind:value={draftRequest.User} disabled={draftRequest.Type === 'redis'} />
+                  <input bind:value={draftRequest.User} disabled={!requiresUser(draftRequest.Type)} />
                 </label>
                 <label>
                   <span>密码</span>
@@ -1869,6 +1885,10 @@
                 <label>
                   <span>指定库</span>
                   <input bind:value={draftRequest.Database} placeholder="audit_lab" />
+                </label>
+                <label>
+                  <span>认证库</span>
+                  <input bind:value={draftRequest.AuthDatabase} placeholder="MongoDB authSource" />
                 </label>
                 <label>
                   <span>指定表</span>

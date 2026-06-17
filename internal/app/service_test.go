@@ -70,15 +70,42 @@ func TestSupportedDatabaseTypesReturnsCanonicalGUIChoices(t *testing.T) {
 	for _, typ := range types {
 		seen[typ] = true
 	}
-	for _, typ := range []string{"mysql", "tidb", "oceanbase", "polardb-mysql", "postgres", "opengauss", "gaussdb", "kingbase", "mssql", "oracle", "redis"} {
+	for _, typ := range []string{"mysql", "tidb", "oceanbase", "polardb-mysql", "postgres", "opengauss", "gaussdb", "kingbase", "mssql", "oracle", "redis", "mongodb", "elasticsearch", "clickhouse-http", "clickhouse-native"} {
 		if !seen[typ] {
 			t.Fatalf("SupportedDatabaseTypes missing %q: %#v", typ, types)
 		}
 	}
-	for _, alias := range []string{"postgresql", "sqlserver", "go-ora", "kingbasees", "oceanbase-mysql"} {
+	for _, alias := range []string{"postgresql", "sqlserver", "go-ora", "kingbasees", "oceanbase-mysql", "mongo", "elastic", "clickhouse"} {
 		if seen[alias] {
 			t.Fatalf("GUI type list should not duplicate alias %q: %#v", alias, types)
 		}
+	}
+}
+
+func TestValidateScanRequestAppliesNewTypeDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		req  ScanRequest
+		port int
+	}{
+		{name: "mongodb", req: ScanRequest{Type: "mongo", Host: "127.0.0.1", User: "root", Password: "pass", AuthDatabase: "admin"}, port: 27017},
+		{name: "elasticsearch", req: ScanRequest{Type: "es", Host: "127.0.0.1"}, port: 9200},
+		{name: "clickhouse-http", req: ScanRequest{Type: "ch-http", Host: "127.0.0.1", User: "default", Password: "pass"}, port: 8123},
+		{name: "clickhouse-native", req: ScanRequest{Type: "clickhouse", Host: "127.0.0.1", User: "default", Password: "pass"}, port: 9000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ValidateScanRequest(tt.req)
+			if err != nil {
+				t.Fatalf("ValidateScanRequest returned error: %v", err)
+			}
+			if cfg.Port != tt.port {
+				t.Fatalf("expected default port %d, got %d", tt.port, cfg.Port)
+			}
+			if tt.name == "mongodb" && cfg.AuthDatabase != "admin" {
+				t.Fatalf("expected auth database to be preserved, got %#v", cfg)
+			}
+		})
 	}
 }
 
