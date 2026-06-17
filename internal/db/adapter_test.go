@@ -3,8 +3,11 @@ package db
 import (
 	"errors"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
+
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 func TestQuoteIdent(t *testing.T) {
@@ -95,6 +98,28 @@ func TestNewAdapterAliases(t *testing.T) {
 		if adapter.Family() != want.family || adapter.DefaultPort() != want.port || adapter.NeedsDatabaseReconnect() != want.reconnect {
 			t.Fatalf("%s: unexpected adapter metadata family=%s port=%d reconnect=%v", kind, adapter.Family(), adapter.DefaultPort(), adapter.NeedsDatabaseReconnect())
 		}
+	}
+}
+
+func TestMySQLConfigWithCharsetFallbackSplitsCharsets(t *testing.T) {
+	cfg := mysql.NewConfig()
+	cfg.Net = "database_scan_mysql_test"
+	cfg.Addr = net.JoinHostPort("127.0.0.1", "3306")
+	cfg.User = "user"
+	cfg.Passwd = "p@ss/word"
+	cfg.DBName = "app"
+	cfg.ParseTime = true
+
+	got, err := mysqlConfigWithCharsetFallback(cfg, "utf8mb4,utf8")
+	if err != nil {
+		t.Fatalf("mysqlConfigWithCharsetFallback returned error: %v", err)
+	}
+	if got.Net != cfg.Net || got.Addr != cfg.Addr || got.User != cfg.User || got.Passwd != cfg.Passwd || got.DBName != cfg.DBName || !got.ParseTime {
+		t.Fatalf("mysql config fields were not preserved: %#v", got)
+	}
+	charsets := reflect.ValueOf(got).Elem().FieldByName("charsets")
+	if charsets.Len() != 2 || charsets.Index(0).String() != "utf8mb4" || charsets.Index(1).String() != "utf8" {
+		t.Fatalf("expected charset fallback utf8mb4,utf8, got %s", got.FormatDSN())
 	}
 }
 

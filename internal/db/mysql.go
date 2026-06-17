@@ -67,7 +67,8 @@ func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer
 	mcfg.Timeout = cfg.Timeout
 	mcfg.ReadTimeout = cfg.Timeout
 	mcfg.WriteTimeout = cfg.Timeout
-	if err := mcfg.Apply(mysql.Charset("utf8mb4", "")); err != nil {
+	mcfg, err := mysqlConfigWithCharsetFallback(mcfg, "utf8mb4,utf8")
+	if err != nil {
 		return nil, err
 	}
 	connector, err := mysql.NewConnector(mcfg)
@@ -80,6 +81,15 @@ func (a MySQLAdapter) Open(ctx context.Context, cfg Config, dialer ContextDialer
 		return nil, err
 	}
 	return db, nil
+}
+
+func mysqlConfigWithCharsetFallback(cfg *mysql.Config, charset string) (*mysql.Config, error) {
+	separator := "?"
+	dsn := cfg.FormatDSN()
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return mysql.ParseDSN(dsn + separator + "charset=" + charset)
 }
 
 func (a MySQLAdapter) ServerInfo(ctx context.Context, db *sql.DB, cfg Config) (ServerInfo, error) {
